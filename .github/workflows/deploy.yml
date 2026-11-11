@@ -1,0 +1,28 @@
+name: Deploy ResepBoard ke cPanel Subdomain
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  web-deploy:
+    name: Upload Otomatis ke FTP cPanel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ambil Kode Terbaru dari Repository
+        uses: actions/checkout@v4
+
+      - name: Sinkronisasi File ke Folder Subdomain cPanel via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          # Jangan pernah menimpa atau menghapus file config.php yang sudah ada di cPanel
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            config.php
