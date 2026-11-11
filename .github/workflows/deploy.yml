@@ -14,6 +14,12 @@ jobs:
       - name: Ambil Kode Terbaru dari Repository
         uses: actions/checkout@v4
 
+      - name: Update Nomor Versi Otomatis (Cache Busting)
+        run: |
+          VER=$(date +%s)
+          sed -i "s/style.css?v=[0-9]*/style.css?v=$VER/g" index.html
+          sed -i "s/script.js?v=[0-9]*/script.js?v=$VER/g" index.html
+
       - name: Sinkronisasi File ke Folder Subdomain cPanel via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:

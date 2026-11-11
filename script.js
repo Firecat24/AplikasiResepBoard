@@ -158,22 +158,12 @@ function initApp() {
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
   try {
-    const res = await fetch(API_URL, { cache: 'no-store' });
+    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { cache: 'no-store' });
     const data = await res.json();
     if (data && data.ok && Array.isArray(data.cards)) {
-      const wasUsingLocal = !useServerDB;
       useServerDB = true;
-
-      // Jika database MySQL masih kosong (0 baris) tapi di browser sudah ada data card/history,
-      // otomatis kirim data yang ada di browser ke dalam database MySQL cPanel!
-      if (wasUsingLocal && data.cards.length === 0 && cards.length > 0) {
-        for (const c of cards) {
-          await syncUpsertCardToServer(c);
-        }
-      } else {
-        cards = data.cards;
-        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
-      }
+      cards = data.cards;
+      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
       renderBoard();
     } else if (data && data.error) {
       console.warn('Info Database cPanel:', data.error);
