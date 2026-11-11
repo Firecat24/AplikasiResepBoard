@@ -3,17 +3,17 @@
 // =========================================================================
 const USERS = [
   {
-    username: 'dokter umum',
+    username: 'dokter_umum',
     password: 'DMU_dokter_umum',
-    nama: 'dr. Andi (Dokter Umum)',
+    nama: 'Dokter Umum',
     role: 'dokter',
     roleLabel: 'Dokter Umum',
     warnaCard: 'yellow' // Card otomatis warna kuning
   },
   {
-    username: 'dokter anak',
+    username: 'dokter_anak',
     password: 'dokter_anak_DMU',
-    nama: 'dr. Sinta (Dokter Anak)',
+    nama: 'Dokter Anak',
     role: 'dokter',
     roleLabel: 'Dokter Anak',
     warnaCard: 'red' // Card otomatis warna merah
@@ -21,7 +21,7 @@ const USERS = [
   {
     username: 'apotek',
     password: 'staff_apotek_DMU',
-    nama: 'Staff Apotek Lt. 1',
+    nama: 'Staff Apotek',
     role: 'apotek',
     roleLabel: 'Staff Obat / Apotek',
     warnaCard: 'blue'
@@ -55,6 +55,7 @@ const boardPage = document.getElementById('board-page');
 const loginForm = document.getElementById('login-form');
 const inputUsername = document.getElementById('username');
 const inputPassword = document.getElementById('password');
+const btnTogglePassword = document.getElementById('btn-toggle-password');
 const loginError = document.getElementById('login-error');
 const demoChips = document.querySelectorAll('.demo-chip');
 
@@ -294,6 +295,8 @@ function handleLogout() {
 }
 
 function showLoginPage() {
+  if (inputPassword) inputPassword.type = 'password';
+  if (btnTogglePassword) btnTogglePassword.textContent = '👁️';
   loginPage.classList.remove('hidden');
   boardPage.classList.add('hidden');
 }
@@ -1027,6 +1030,14 @@ function setupDragAndDrop() {
 function setupEventListeners() {
   loginForm.addEventListener('submit', handleLogin);
   btnLogout.addEventListener('click', handleLogout);
+
+  if (btnTogglePassword) {
+    btnTogglePassword.addEventListener('click', () => {
+      const isHidden = inputPassword.type === 'password';
+      inputPassword.type = isHidden ? 'text' : 'password';
+      btnTogglePassword.textContent = isHidden ? '🙈' : '👁️';
+    });
+  }
 
   demoChips.forEach((chip) => {
     chip.addEventListener('click', () => {
