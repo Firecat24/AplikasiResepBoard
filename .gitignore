@@ -1,5 +1,6 @@
-# File kredensial database cPanel (JANGAN di-upload ke GitHub agar aman & tidak tertimpa di cPanel)
+# File kredensial database cPanel & catatan akun login (JANGAN di-upload ke GitHub)
 config.php
+akun_login.txt
 
 # File sistem & editor
 .DS_Store

@@ -3,7 +3,7 @@
 // =========================================================================
 const USERS = [
   {
-    username: 'dokter_umum',
+    username: 'dokter umum',
     password: 'DMU_dokter_umum',
     nama: 'dr. Andi (Dokter Umum)',
     role: 'dokter',
@@ -11,7 +11,7 @@ const USERS = [
     warnaCard: 'yellow' // Card otomatis warna kuning
   },
   {
-    username: 'dokter_anak',
+    username: 'dokter anak',
     password: 'dokter_anak_DMU',
     nama: 'dr. Sinta (Dokter Anak)',
     role: 'dokter',
@@ -157,13 +157,24 @@ async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
   try {
     const res = await fetch(API_URL, { cache: 'no-store' });
-    if (!res.ok) return;
     const data = await res.json();
     if (data && data.ok && Array.isArray(data.cards)) {
+      const wasUsingLocal = !useServerDB;
       useServerDB = true;
-      cards = data.cards;
-      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
+
+      // Jika database MySQL masih kosong (0 baris) tapi di browser sudah ada data card/history,
+      // otomatis kirim data yang ada di browser ke dalam database MySQL cPanel!
+      if (wasUsingLocal && data.cards.length === 0 && cards.length > 0) {
+        for (const c of cards) {
+          await syncUpsertCardToServer(c);
+        }
+      } else {
+        cards = data.cards;
+        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
+      }
       renderBoard();
+    } else if (data && data.error) {
+      console.warn('Info Database cPanel:', data.error);
     }
   } catch (err) {
     // Jika dibuka di lokal tanpa server PHP/MySQL, otomatis tetap gunakan localStorage
