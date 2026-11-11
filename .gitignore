@@ -1,0 +1,9 @@
+# File kredensial database cPanel (JANGAN di-upload ke GitHub agar aman & tidak tertimpa di cPanel)
+config.php
+
+# File sistem & editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

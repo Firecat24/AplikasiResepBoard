@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MediBoard - Pantau Resep Dokter & Apotek Lt. 1</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ================= HALAMAN LOGIN ================= -->
+  <section id="login-page" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="logo-icon">💊</div>
+        <h1>MediBoard Trello</h1>
+        <p>Sistem Pantau Resep Dokter &amp; Apotek Lt. 1</p>
+      </div>
+
+      <form id="login-form" class="login-form">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" placeholder="Masukkan username..." required autocomplete="off" />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" placeholder="Masukkan password..." required />
+        </div>
+
+        <div id="login-error" class="login-error hidden">
+          Username atau password salah!
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block">Masuk</button>
+      </form>
+
+      <!-- Info Akun Statis untuk memudahkan percobaan -->
+      <div class="demo-accounts">
+        <p class="demo-title">Daftar Akun Statis (Klik untuk isi otomatis):</p>
+        <div class="demo-list">
+          <button type="button" class="demo-chip chip-yellow" data-user="dokter_umum" data-pass="DMU_dokter_umum">
+            🟡 <strong>dokter_umum</strong> (Pass: DMU_dokter_umum)
+          </button>
+          <button type="button" class="demo-chip chip-red" data-user="dokter_anak" data-pass="dokter_anak_DMU">
+            🔴 <strong>dokter_anak</strong> (Pass: dokter_anak_DMU)
+          </button>
+          <button type="button" class="demo-chip chip-green" data-user="apotek" data-pass="staff_apotek_DMU">
+            🟢 <strong>apotek</strong> - Staff Lt. 1 (staff_apotek_DMU)
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= HALAMAN UTAMA (BOARD) ================= -->
+  <section id="board-page" class="board-wrapper hidden">
+    <!-- Top Header / Profil -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand-logo">💊 MediBoard</span>
+        <span class="brand-subtitle">Status Resep Dokter &amp; Apotek Lt. 1</span>
+      </div>
+
+      <div class="topbar-right">
+        <!-- Tombol Lihat History -->
+        <button id="btn-open-history" class="btn btn-history">
+          📜 History (<span id="count-history">0</span>)
+        </button>
+
+        <!-- Grup Aksi Khusus Dokter: Hapus Card (Kiri) & Tambah Card (Kanan) -->
+        <div id="dokter-actions" class="dokter-actions">
+          <button id="btn-toggle-delete" class="btn btn-delete-mode">
+            🗑️ Pilih &amp; Hapus Card
+          </button>
+          <button id="btn-confirm-delete" class="btn btn-danger-confirm hidden">
+            🗑️ Hapus (<span id="selected-count">0</span>)
+          </button>
+          <button id="btn-cancel-delete" class="btn btn-secondary hidden">
+            Batal
+          </button>
+
+          <button id="btn-open-modal" class="btn btn-add-card">
+            + Tambah Card / Resep
+          </button>
+        </div>
+
+        <!-- Profil User yang Login -->
+        <div class="profile-box">
+          <div id="profile-avatar" class="profile-avatar">D</div>
+          <div class="profile-info">
+            <span id="profile-name" class="profile-name">Nama User</span>
+            <span id="profile-role" class="profile-role">Role</span>
+          </div>
+        </div>
+
+        <button id="btn-logout" class="btn btn-logout" title="Keluar dari sesi">
+          Keluar
+        </button>
+      </div>
+    </header>
+
+    <!-- Banner Mode Pilih Hapus (Aktif saat tombol Hapus Card diklik) -->
+    <div id="delete-mode-banner" class="delete-mode-banner hidden">
+      <span>🎯 <strong>Mode Hapus Card Aktif:</strong> Klik pada card yang ingin dihapus, lalu tekan tombol <strong>"Hapus"</strong> di atas.</span>
+    </div>
+
+    <!-- Info Bar Singkat -->
+    <div class="subbar">
+      <div class="legend-group">
+        <span class="legend-title">Warna Card Dokter:</span>
+        <span class="legend-badge badge-yellow">Dokter Umum (Kuning)</span>
+        <span class="legend-badge badge-red">Dokter Anak (Merah)</span>
+        <span class="legend-badge badge-blue">Dokter Lainnya (Biru)</span>
+      </div>
+      <div class="subbar-info" id="role-permission-hint">
+        <span>⏱️ Otomatis pindah dari <strong>New</strong> ke <strong>Pending</strong> jika &gt; 2 menit belum di-<em>On Progress</em>.</span>
+      </div>
+    </div>
+
+    <!-- Papan Kanban 4 Fase -->
+    <main class="board-columns">
+      <!-- Kolom 1: NEW -->
+      <div class="board-column" data-status="new">
+        <div class="column-header header-new">
+          <div class="column-title">
+            <span class="status-dot dot-new"></span>
+            <h2>New</h2>
+          </div>
+          <span class="column-count" id="count-new">0</span>
+        </div>
+        <p class="column-desc">Resep baru (Otomatis ke Pending &gt; 2 menit)</p>
+        <div class="card-list" id="list-new" data-status="new"></div>
+      </div>
+
+      <!-- Kolom 2: PENDING -->
+      <div class="board-column" data-status="pending">
+        <div class="column-header header-pending">
+          <div class="column-title">
+            <span class="status-dot dot-pending"></span>
+            <h2>Pending</h2>
+          </div>
+          <span class="column-count" id="count-pending">0</span>
+        </div>
+        <p class="column-desc">Menunggu diproses (&gt; 2 menit dari New)</p>
+        <div class="card-list" id="list-pending" data-status="pending"></div>
+      </div>
+
+      <!-- Kolom 3: ON PROGRESS -->
+      <div class="board-column" data-status="onprogress">
+        <div class="column-header header-onprogress">
+          <div class="column-title">
+            <span class="status-dot dot-onprogress"></span>
+            <h2>On Progress</h2>
+          </div>
+          <span class="column-count" id="count-onprogress">0</span>
+        </div>
+        <p class="column-desc">Sedang diracik Staff Apotek (Timer mulai 00:00)</p>
+        <div class="card-list" id="list-onprogress" data-status="onprogress"></div>
+      </div>
+
+      <!-- Kolom 4: DONE -->
+      <div class="board-column" data-status="done">
+        <div class="column-header header-done">
+          <div class="column-title">
+            <span class="status-dot dot-done"></span>
+            <h2>Done</h2>
+          </div>
+          <span class="column-count" id="count-done">0</span>
+        </div>
+        <p class="column-desc">Selesai diracik — Pasien boleh ambil di Lt. 1</p>
+        <div class="card-list" id="list-done" data-status="done"></div>
+      </div>
+    </main>
+  </section>
+
+  <!-- ================= MODAL TAMBAH / EDIT CARD RESEP ================= -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title">Tambah Resep Baru</h3>
+        <button type="button" id="btn-close-modal" class="btn-close">&times;</button>
+      </div>
+
+      <form id="card-form">
+        <input type="hidden" id="edit-card-id" value="" />
+
+        <!-- Input 1: Dokternya Siapa -->
+        <div class="form-group">
+          <label for="input-dokter">Dokternya Siapa</label>
+          <input
+            type="text"
+            id="input-dokter"
+            placeholder="Contoh: dr. Andi (Dokter Umum)"
+            required
+          />
+          <small class="form-hint">Otomatis terisi sesuai sesi login dokter, namun tetap bisa diedit.</small>
+        </div>
+
+        <!-- Input 2: Tulisan Resep Dokter / Keterangan -->
+        <div class="form-group">
+          <label for="input-resep">Tulisan Resep Dokter / Keterangan</label>
+          <textarea
+            id="input-resep"
+            rows="4"
+            placeholder="Tulis nama pasien dan resep obat di sini...&#10;Contoh: Pasien Bpk. Budi - Paracetamol 3x1, Amoxicillin 3x1"
+            required
+          ></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-modal" class="btn btn-secondary">Batal</button>
+          <button type="submit" id="btn-submit-card" class="btn btn-primary">Simpan Resep</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MODAL HISTORY (RESEP TELAH DIAMBIL) ================= -->
+  <div id="history-overlay" class="modal-overlay hidden">
+    <div class="modal-box modal-history-box">
+      <div class="modal-header">
+        <h3>📜 History Resep (Telah Diambil Pasien)</h3>
+        <button type="button" id="btn-close-history" class="btn-close">&times;</button>
+      </div>
+
+      <!-- Filter Periode History & Download (1 Hari, 1 Bulan, 1 Tahun) -->
+      <div class="history-filter-bar">
+        <div class="filter-group">
+          <label for="history-filter-type">Pilih Periode:</label>
+          <select id="history-filter-type" class="history-select">
+            <option value="day">1 Hari Saja</option>
+            <option value="month">1 Bulan Saja</option>
+            <option value="year">1 Tahun Saja</option>
+          </select>
+        </div>
+
+        <div class="filter-group" id="filter-input-day-wrap">
+          <label for="history-filter-day">Tanggal:</label>
+          <input type="date" id="history-filter-day" class="history-input" />
+        </div>
+
+        <div class="filter-group hidden" id="filter-input-month-wrap">
+          <label for="history-filter-month">Bulan:</label>
+          <input type="month" id="history-filter-month" class="history-input" />
+        </div>
+
+        <div class="filter-group hidden" id="filter-input-year-wrap">
+          <label for="history-filter-year">Tahun:</label>
+          <input type="number" id="history-filter-year" class="history-input" min="2020" max="2100" step="1" />
+        </div>
+      </div>
+
+      <div id="history-summary-info" class="history-summary-info">
+        Menampilkan 0 riwayat pada periode ini.
+      </div>
+
+      <div id="history-list" class="history-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="btn-export-history" class="btn btn-primary">📥 Download CSV Sesuai Periode</button>
+        <button type="button" id="btn-close-history-bottom" class="btn btn-secondary">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
