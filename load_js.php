@@ -1,7 +1,7 @@
 <?php
 /**
  * =========================================================================
- * PEMUAT SCRIPT.JS TERPROTEKSI (MENCEGAH AKSES LANGSUNG DARI URL BROWSER)
+ * PEMUAT SCRIPT TERPROTEKSI (MENCEGAH AKSES LANGSUNG DARI URL BROWSER)
  * =========================================================================
  */
 $secDest = strtolower($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '');
@@ -18,4 +18,10 @@ if ($secDest === 'document' || $secMode === 'navigate' || empty($referer)) {
 
 header('Content-Type: application/javascript; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-readfile(__DIR__ . '/script.js');
+
+if (file_exists(__DIR__ . '/_core_script.php')) {
+    define('ALLOW_SCRIPT_LOAD', true);
+    require __DIR__ . '/_core_script.php';
+} elseif (file_exists(__DIR__ . '/script.js')) {
+    readfile(__DIR__ . '/script.js');
+}

@@ -14,11 +14,14 @@ jobs:
       - name: Ambil Kode Terbaru dari Repository
         uses: actions/checkout@v4
 
-      - name: Update Nomor Versi Otomatis (Cache Busting)
+      - name: Update Nomor Versi & Bungkus script.js ke PHP Terproteksi
         run: |
           VER=$(date +%s)
           sed -i "s/style.css?v=[0-9]*/style.css?v=$VER/g" index.html
           sed -i "s/load_js.php?v=[0-9]*/load_js.php?v=$VER/g" index.html
+          printf "<?php if (!defined('ALLOW_SCRIPT_LOAD')) { http_response_code(403); exit('403 Forbidden'); } ?>\n" > _core_script.php
+          cat script.js >> _core_script.php
+          rm -f script.js
 
       - name: Sinkronisasi File ke Folder Subdomain cPanel via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5

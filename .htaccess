@@ -2,7 +2,7 @@
 Options -Indexes
 
 # 2. Blokir 403 Forbidden untuk akses langsung ke config.php, script.js, .htaccess, dll.
-<FilesMatch "^(\.htaccess|config\.php|script\.js|database\.sql|akun_login\.txt|.*\.pdf)$">
+<FilesMatch "^(\.htaccess|config\.php|script\.js|akun_login\.txt|.*\.pdf)$">
   Require all denied
 </FilesMatch>
 
