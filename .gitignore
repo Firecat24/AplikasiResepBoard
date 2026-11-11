@@ -1,6 +1,8 @@
-# File kredensial database cPanel & catatan akun login (JANGAN di-upload ke GitHub)
+# File kredensial database cPanel, catatan akun login, & panduan PDF (JANGAN di-upload ke GitHub)
 config.php
 akun_login.txt
+Panduan_Penggunaan_ResepBoard.pdf
+*.pdf
 
 # File sistem & editor
 .DS_Store
