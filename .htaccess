@@ -1,24 +1,14 @@
 # 1. Matikan Directory Listing
 Options -Indexes
 
-# 2. Blokir akses langsung ke file sensitif (config.php, .htaccess, file catatan/sql/pdf)
-<FilesMatch "^(\.htaccess|config\.php|database\.sql|akun_login\.txt|.*\.pdf)$">
+# 2. Blokir 403 Forbidden untuk akses langsung ke config.php, script.js, .htaccess, dll.
+<FilesMatch "^(\.htaccess|config\.php|script\.js|database\.sql|akun_login\.txt|.*\.pdf)$">
   Require all denied
 </FilesMatch>
 
-# 3. Blokir 403 Forbidden jika seseorang membuka langsung /script.js atau /style.css di tab browser
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteCond %{HTTP:Sec-Fetch-Dest} ^document$ [NC,OR]
-  RewriteCond %{HTTP:Sec-Fetch-Mode} ^navigate$ [NC,OR]
-  RewriteCond %{HTTP_REFERER} ^$
-  RewriteCond %{REQUEST_URI} \.(js|css)$ [NC]
-  RewriteRule ^.*$ - [F,L]
-</IfModule>
-
-# 4. Paksa browser user selalu mengambil versi terbaru saat di-refresh
+# 3. Paksa browser user selalu mengambil versi terbaru saat di-refresh
 <IfModule mod_headers.c>
-  <FilesMatch "\.(html|htm|js|css)$">
+  <FilesMatch "\.(html|htm|js|css|php)$">
     FileETag None
     Header unset ETag
     Header set Cache-Control "max-age=0, no-cache, no-store, must-revalidate"
