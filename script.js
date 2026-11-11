@@ -33,6 +33,7 @@ const PENDING_TIMEOUT_MS = 2 * 60 * 1000;
 
 const STORAGE_CARDS_KEY = 'mediboard_resep_cards_v2';
 const STORAGE_SESSION_KEY = 'mediboard_logged_user';
+const STORAGE_DRAFT_RESEP_KEY = 'mediboard_draft_resep';
 const API_URL = 'api.php'; // Endpoint untuk koneksi ke Database MySQL di cPanel
 
 // =========================================================================
@@ -216,32 +217,7 @@ function loadCardsFromStorage() {
       cards = [];
     }
   } else {
-    const now = Date.now();
-    cards = [
-      {
-        id: 'card-sample-1',
-        dokter: 'dr. Andi (Dokter Umum)',
-        resep: 'Pasien: Bpk. Hendra\nResep: Paracetamol 500mg (3x1), Vitamin C (1x1)',
-        warna: 'yellow',
-        status: 'new',
-        createdAt: now - 30 * 1000, // Baru dibuat 30 detik lalu
-        pendingAt: null,
-        progressAt: null,
-        completedAt: null
-      },
-      {
-        id: 'card-sample-2',
-        dokter: 'dr. Sinta (Dokter Anak)',
-        resep: 'Pasien: An. Dika (5 thn)\nResep: Sirup Amoxicillin 125mg (3x1 cth), Puyer Batuk (3x1)',
-        warna: 'red',
-        status: 'onprogress',
-        createdAt: now - 5 * 60 * 1000,
-        pendingAt: null,
-        progressAt: now - 45 * 1000, // Sedang diracik 45 detik
-        completedAt: null
-      }
-    ];
-    saveCardsToStorage();
+    cards = [];
   }
 }
 
@@ -419,7 +395,8 @@ function openAddModal() {
   btnSubmitCard.textContent = 'Simpan Resep';
   editCardIdInput.value = '';
   inputDokter.value = currentUser.nama;
-  inputResep.value = '';
+  // Pulihkan draft tulisan resep jika sebelumnya belum sempat tersimpan
+  inputResep.value = sessionStorage.getItem(STORAGE_DRAFT_RESEP_KEY) || '';
 
   modalOverlay.classList.remove('hidden');
   inputResep.focus();
@@ -480,6 +457,8 @@ function handleSaveCard(e) {
     };
     cards.unshift(newCard);
     syncUpsertCardToServer(newCard);
+    // Hapus draft setelah resep berhasil disimpan
+    sessionStorage.removeItem(STORAGE_DRAFT_RESEP_KEY);
   }
 
   saveCardsToStorage();
@@ -1053,9 +1032,16 @@ function setupEventListeners() {
   btnCancelModal.addEventListener('click', closeAddModal);
   cardForm.addEventListener('submit', handleSaveCard);
 
-  modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) closeAddModal();
-  });
+  // Simpan draft otomatis saat dokter mengetik resep baru (agar tidak hilang jika tertutup/refresh)
+  if (inputResep) {
+    inputResep.addEventListener('input', () => {
+      if (!editCardIdInput.value) {
+        sessionStorage.setItem(STORAGE_DRAFT_RESEP_KEY, inputResep.value);
+      }
+    });
+  }
+
+  // Catatan: Klik di luar modal (modalOverlay) sengaja dikunci agar tidak menutup form secara tidak sengaja
 
   // Tombol Pilih & Hapus Card di samping kiri Tambah Card (Dokter)
   btnToggleDelete.addEventListener('click', enterDeleteMode);
