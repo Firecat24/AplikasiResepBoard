@@ -26,3 +26,4 @@ jobs:
             **/.git*/**
             **/node_modules/**
             config.php
+            database.sql
