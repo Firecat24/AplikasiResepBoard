@@ -1,29 +1,102 @@
 <?php
 /**
  * =========================================================================
- * KONEKSI API KE DATABASE MYSQL CPANEL
- * Kredensial database diambil dari file config.php (agar aman saat push/pull Git)
+ * KONEKSI API & AUTENTIKASI LOGIN SERVER-SIDE (AMAN DARI PUBLIK)
  * =========================================================================
  */
 $DB_HOST = 'localhost';
 $DB_NAME = '';
 $DB_USER = '';
 $DB_PASS = '';
+$USERS = [];
 
 if (file_exists(__DIR__ . '/config.php')) {
     require_once __DIR__ . '/config.php';
 }
 
-header('Content-Type: application/json; charset=utf-8');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+// Fallback akun di sisi server PHP jika config.php di cPanel belum di-update
+if (empty($USERS)) {
+    $USERS = [
+        [
+            'username' => 'dokter_umum',
+            'password' => base64_decode('RE1VX2Rva3Rlcl91bXVt'),
+            'nama' => 'Dokter Umum',
+            'role' => 'dokter',
+            'roleLabel' => 'Dokter Umum',
+            'warnaCard' => 'yellow'
+        ],
+        [
+            'username' => 'dokter_anak',
+            'password' => base64_decode('ZG9rdGVyX2FuYWtfRE1V'),
+            'nama' => 'Dokter Anak',
+            'role' => 'dokter',
+            'roleLabel' => 'Dokter Anak',
+            'warnaCard' => 'red'
+        ],
+        [
+            'username' => 'apotek',
+            'password' => base64_decode('c3RhZmZfYXBvdGVrX0RNVQ=='),
+            'nama' => 'Staff Apotek',
+            'role' => 'apotek',
+            'roleLabel' => 'Staff Obat / Apotek',
+            'warnaCard' => 'blue'
+        ]
+    ];
+}
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
+header('Content-Type: application/json; charset=utf-8');
+
+// Tolak jika seseorang mencoba membuka URL /api.php langsung dari address bar browser
+$requestedWith = $_SERVER['HTTP_X_REQUESTED_WITH'] ?? '';
+if (strtolower($requestedWith) !== 'xmlhttprequest') {
+    http_response_code(403);
+    echo json_encode([
+        'ok' => false,
+        'error' => '403 Forbidden - Akses langsung tidak diizinkan.'
+    ]);
     exit;
 }
 
+$method = $_SERVER['REQUEST_METHOD'];
+$input = null;
+if ($method === 'POST') {
+    $input = json_decode(file_get_contents('php://input'), true);
+}
+
+// =========================================================================
+// POST (action = login): Verifikasi Login di Server (Tanpa membocorkan password ke JS)
+// =========================================================================
+if ($method === 'POST' && isset($input['action']) && $input['action'] === 'login') {
+    $uName = trim($input['username'] ?? '');
+    $uPass = trim($input['password'] ?? '');
+
+    foreach ($USERS as $u) {
+        if ($u['username'] === $uName && $u['password'] === $uPass) {
+            echo json_encode([
+                'ok' => true,
+                'user' => [
+                    'username' => $u['username'],
+                    'nama' => $u['nama'],
+                    'role' => $u['role'],
+                    'roleLabel' => $u['roleLabel'],
+                    'warnaCard' => $u['warnaCard']
+                ]
+            ]);
+            exit;
+        }
+    }
+
+    http_response_code(401);
+    echo json_encode([
+        'ok' => false,
+        'error' => 'Username atau password salah!'
+    ]);
+    exit;
+}
+
+// =========================================================================
+// KONEKSI DATABASE MYSQL CPANEL
+// =========================================================================
 try {
     $pdo = new PDO(
         "mysql:host={$DB_HOST};dbname={$DB_NAME};charset=utf8mb4",
@@ -34,34 +107,14 @@ try {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
         ]
     );
-
-    // Otomatis buat tabel jika belum ada di database
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS `resep_cards` (
-          `id` VARCHAR(64) NOT NULL,
-          `dokter` VARCHAR(150) NOT NULL,
-          `resep` TEXT NOT NULL,
-          `warna` VARCHAR(20) NOT NULL DEFAULT 'yellow',
-          `status` ENUM('new', 'pending', 'onprogress', 'done', 'history') NOT NULL DEFAULT 'new',
-          `created_at` BIGINT NOT NULL,
-          `pending_at` BIGINT DEFAULT NULL,
-          `progress_at` BIGINT DEFAULT NULL,
-          `completed_at` BIGINT DEFAULT NULL,
-          PRIMARY KEY (`id`),
-          INDEX `idx_status` (`status`),
-          INDEX `idx_completed_at` (`completed_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
         'ok' => false,
-        'error' => 'Database belum terhubung: ' . $e->getMessage()
+        'error' => 'Database belum terhubung'
     ]);
     exit;
 }
-
-$method = $_SERVER['REQUEST_METHOD'];
 
 // =========================================================================
 // GET: Ambil seluruh data Card & History dari Database MySQL
@@ -92,7 +145,6 @@ if ($method === 'GET') {
 // POST: Simpan / Update / Hapus Card di Database MySQL
 // =========================================================================
 if ($method === 'POST') {
-    $input = json_decode(file_get_contents('php://input'), true);
     if (!$input || !isset($input['action'])) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => 'Request tidak valid']);
@@ -139,7 +191,6 @@ if ($method === 'POST') {
         $ids = $input['ids'];
         if (count($ids) > 0) {
             $placeholders = implode(',', array_fill(0, count($ids), '?'));
-            // Pastikan hanya menghapus yang masih di new atau pending
             $stmt = $pdo->prepare("
                 DELETE FROM `resep_cards`
                 WHERE `id` IN ($placeholders) AND `status` IN ('new', 'pending')

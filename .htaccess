@@ -1,4 +1,19 @@
-# Paksa browser user selalu mengambil versi terbaru dari index.html, style.css, dan script.js saat di-refresh
+# 1. Matikan Directory Listing
+Options -Indexes
+
+# 2. Blokir akses langsung ke file sensitif (config.php, .htaccess, file catatan/sql)
+<FilesMatch "^(\.htaccess|config\.php|database\.sql|akun_login\.txt|.*\.pdf)$">
+  Require all denied
+</FilesMatch>
+
+# 3. Blokir jika seseorang mengetik langsung URL /script.js atau /style.css di address bar browser
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP_REFERER} ^$
+  RewriteRule \.(js|css)$ - [F,L]
+</IfModule>
+
+# 4. Paksa browser user selalu mengambil versi terbaru saat di-refresh
 <IfModule mod_headers.c>
   <FilesMatch "\.(html|htm|js|css)$">
     FileETag None

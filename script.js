@@ -1,40 +1,13 @@
 // =========================================================================
-// 1. KONFIGURASI AKUN STATIS
+// 1. KONFIGURASI APLIKASI (AKUN LOGIN DISIMPAN AMAN DI SERVER PHP)
 // =========================================================================
-const USERS = [
-  {
-    username: 'dokter_umum',
-    password: 'DMU_dokter_umum',
-    nama: 'Dokter Umum',
-    role: 'dokter',
-    roleLabel: 'Dokter Umum',
-    warnaCard: 'yellow' // Card otomatis warna kuning
-  },
-  {
-    username: 'dokter_anak',
-    password: 'dokter_anak_DMU',
-    nama: 'Dokter Anak',
-    role: 'dokter',
-    roleLabel: 'Dokter Anak',
-    warnaCard: 'red' // Card otomatis warna merah
-  },
-  {
-    username: 'apotek',
-    password: 'staff_apotek_DMU',
-    nama: 'Staff Apotek',
-    role: 'apotek',
-    roleLabel: 'Staff Obat / Apotek',
-    warnaCard: 'blue'
-  }
-];
-
 // Batas waktu otomatis pindah dari "New" ke "Pending" = 2 Menit (120.000 ms)
 const PENDING_TIMEOUT_MS = 2 * 60 * 1000;
 
 const STORAGE_CARDS_KEY = 'mediboard_resep_cards_v2';
 const STORAGE_SESSION_KEY = 'mediboard_logged_user';
 const STORAGE_DRAFT_RESEP_KEY = 'mediboard_draft_resep';
-const API_URL = 'api.php'; // Endpoint untuk koneksi ke Database MySQL di cPanel
+const API_URL = 'api.php'; // Endpoint untuk autentikasi & koneksi Database MySQL di cPanel
 
 // =========================================================================
 // 2. STATE & ELEMEN DOM
@@ -136,12 +109,19 @@ function initApp() {
     updateLiveTimers();
   }, 1000);
 
-  // Polling sinkronisasi otomatis ke database cPanel setiap 2.5 detik (antar komputer Dokter & Apotek)
+  // Polling sinkronisasi otomatis ke database cPanel (hanya saat user sudah login & tab sedang aktif/terlihat)
   setInterval(() => {
-    if (useServerDB && !draggedCardId && !isDeleteMode) {
+    if (useServerDB && currentUser && !document.hidden && !draggedCardId && !isDeleteMode) {
       fetchCardsFromServer();
     }
-  }, 2500);
+  }, 3000);
+
+  // Langsung sinkronkan saat tab kembali dibuka/dilihat
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && useServerDB && currentUser) {
+      fetchCardsFromServer();
+    }
+  });
 
   // Sinkronisasi real-time antar tab browser lokal
   window.addEventListener('storage', (event) => {
@@ -158,7 +138,10 @@ function initApp() {
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
   try {
-    const res = await fetch(`${API_URL}?_t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${API_URL}?_t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
     const data = await res.json();
     if (data && data.ok && Array.isArray(data.cards)) {
       useServerDB = true;
@@ -178,7 +161,10 @@ async function syncUpsertCardToServer(card) {
   try {
     await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
       body: JSON.stringify({ action: 'upsert', card })
     });
   } catch (err) {
@@ -191,7 +177,10 @@ async function syncDeleteCardsToServer(ids) {
   try {
     await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
       body: JSON.stringify({ action: 'delete', ids })
     });
   } catch (err) {
@@ -232,25 +221,41 @@ function checkSavedSession() {
   showLoginPage();
 }
 
-function handleLogin(e) {
+async function handleLogin(e) {
   e.preventDefault();
   const usernameVal = inputUsername.value.trim();
   const passwordVal = inputPassword.value.trim();
 
-  const foundUser = USERS.find(
-    (u) => u.username === usernameVal && u.password === passwordVal
-  );
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        action: 'login',
+        username: usernameVal,
+        password: passwordVal
+      })
+    });
 
-  if (!foundUser) {
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok || !data.user) {
+      loginError.classList.remove('hidden');
+      return;
+    }
+
+    loginError.classList.add('hidden');
+    currentUser = data.user;
+    sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(currentUser));
+    loginForm.reset();
+    showBoardPage();
+    fetchCardsFromServer();
+  } catch (err) {
+    loginError.textContent = 'Gagal menghubungi server login.';
     loginError.classList.remove('hidden');
-    return;
   }
-
-  loginError.classList.add('hidden');
-  currentUser = foundUser;
-  sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(currentUser));
-  loginForm.reset();
-  showBoardPage();
 }
 
 function handleLogout() {
