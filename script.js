@@ -537,10 +537,13 @@ function canTransitionStatus(currentStatus, targetStatus) {
   if (currentStatus === targetStatus) return false;
 
   // ATURAN DOKTER:
-  // Dokter hanya boleh memindahkan card dari "New" ke "Pending".
-  // Dari Pending ke On Progress (dst) TIDAK BISA dipindahkan oleh Dokter.
+  // Dokter boleh memindahkan card dari "New" ke "Pending",
+  // dan dari "Done" ke "History" (ketika resep telah diambil).
   if (currentUser.role === 'dokter') {
     if (currentStatus === 'new' && targetStatus === 'pending') {
+      return true;
+    }
+    if (currentStatus === 'done' && targetStatus === 'history') {
       return true;
     }
     return false;
@@ -753,20 +756,37 @@ function createCardElement(card) {
   }
 
   // Tombol Pindah Fase Terkunci Sesuai Role:
-  // 1) Untuk DOKTER: Saat di "New", dokter bisa memindahkan manual ke "Pending"
-  if (isDokter && !isDeleteMode && card.status === 'new') {
-    const controlsDiv = document.createElement('div');
-    controlsDiv.className = 'card-controls';
+  // 1) Untuk DOKTER:
+  // - Saat di "New" -> bisa memindahkan manual ke "Pending"
+  // - Saat di "Done" -> bisa menekan "Resep Telah Diambil (Ke History)"
+  if (isDokter && !isDeleteMode) {
+    if (card.status === 'new') {
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'card-controls';
 
-    const btnToPending = document.createElement('button');
-    btnToPending.type = 'button';
-    btnToPending.className = 'btn-quick-action btn-to-pending';
-    btnToPending.textContent = '⏳ Alihkan ke Pending';
-    btnToPending.addEventListener('click', () =>
-      updateCardStatus(card.id, 'pending')
-    );
-    controlsDiv.appendChild(btnToPending);
-    div.appendChild(controlsDiv);
+      const btnToPending = document.createElement('button');
+      btnToPending.type = 'button';
+      btnToPending.className = 'btn-quick-action btn-to-pending';
+      btnToPending.textContent = '⏳ Alihkan ke Pending';
+      btnToPending.addEventListener('click', () =>
+        updateCardStatus(card.id, 'pending')
+      );
+      controlsDiv.appendChild(btnToPending);
+      div.appendChild(controlsDiv);
+    } else if (card.status === 'done') {
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'card-controls';
+
+      const btnToHistory = document.createElement('button');
+      btnToHistory.type = 'button';
+      btnToHistory.className = 'btn-quick-action btn-to-history';
+      btnToHistory.textContent = '📦 Resep Telah Diambil (Ke History)';
+      btnToHistory.addEventListener('click', () =>
+        updateCardStatus(card.id, 'history')
+      );
+      controlsDiv.appendChild(btnToHistory);
+      div.appendChild(controlsDiv);
+    }
   }
 
   // 2) Untuk STAFF APOTEK:
