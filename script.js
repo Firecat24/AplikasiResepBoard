@@ -266,9 +266,6 @@ async function fetchCardsFromServer() {
     // Jika dibuka di lokal tanpa server PHP/MySQL, otomatis tetap gunakan localStorage
   }
 }
-    // Jika dibuka di lokal tanpa server PHP/MySQL, otomatis tetap gunakan localStorage
-  }
-}
 
 async function syncUpsertCardToServer(card) {
   if (!useServerDB) return;

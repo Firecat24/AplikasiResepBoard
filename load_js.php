@@ -6,10 +6,9 @@
  */
 $secDest = strtolower($_SERVER['HTTP_SEC_FETCH_DEST'] ?? '');
 $secMode = strtolower($_SERVER['HTTP_SEC_FETCH_MODE'] ?? '');
-$referer = $_SERVER['HTTP_REFERER'] ?? '';
 
 // Tolak dengan 403 Forbidden jika dibuka langsung sebagai tab/dokumen di browser
-if ($secDest === 'document' || $secMode === 'navigate' || empty($referer)) {
+if ($secDest === 'document' || $secMode === 'navigate') {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');
     echo '403 Forbidden - Access to this file is denied.';
