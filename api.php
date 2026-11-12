@@ -126,12 +126,15 @@ if ($method === 'GET') {
     $cards = array_map(function ($r) {
         return [
             'id' => $r['id'],
+            'pasien' => $r['pasien'] ?? '',
             'dokter' => $r['dokter'],
             'resep' => $r['resep'],
+            'keteranganFoto' => $r['keterangan_foto'] ?? '',
             'warna' => $r['warna'],
             'status' => $r['status'],
             'createdAt' => (int) $r['created_at'],
             'pendingAt' => $r['pending_at'] !== null ? (int) $r['pending_at'] : null,
+            'diskusiAt' => isset($r['diskusi_at']) && $r['diskusi_at'] !== null ? (int) $r['diskusi_at'] : null,
             'progressAt' => $r['progress_at'] !== null ? (int) $r['progress_at'] : null,
             'completedAt' => $r['completed_at'] !== null ? (int) $r['completed_at'] : null
         ];
@@ -157,28 +160,34 @@ if ($method === 'POST') {
         $c = $input['card'];
         $stmt = $pdo->prepare("
             INSERT INTO `resep_cards`
-              (`id`, `dokter`, `resep`, `warna`, `status`, `created_at`, `pending_at`, `progress_at`, `completed_at`)
+              (`id`, `pasien`, `dokter`, `resep`, `keterangan_foto`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
             VALUES
-              (:id, :dokter, :resep, :warna, :status, :created_at, :pending_at, :progress_at, :completed_at)
+              (:id, :pasien, :dokter, :resep, :keterangan_foto, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
             ON DUPLICATE KEY UPDATE
+              `pasien` = VALUES(`pasien`),
               `dokter` = VALUES(`dokter`),
               `resep` = VALUES(`resep`),
+              `keterangan_foto` = VALUES(`keterangan_foto`),
               `warna` = VALUES(`warna`),
               `status` = VALUES(`status`),
               `created_at` = VALUES(`created_at`),
               `pending_at` = VALUES(`pending_at`),
+              `diskusi_at` = VALUES(`diskusi_at`),
               `progress_at` = VALUES(`progress_at`),
               `completed_at` = VALUES(`completed_at`)
         ");
 
         $stmt->execute([
             ':id' => $c['id'],
+            ':pasien' => trim($c['pasien'] ?? ''),
             ':dokter' => $c['dokter'],
             ':resep' => $c['resep'],
+            ':keterangan_foto' => isset($c['keteranganFoto']) ? trim($c['keteranganFoto']) : null,
             ':warna' => $c['warna'] ?? 'yellow',
             ':status' => $c['status'] ?? 'new',
             ':created_at' => $c['createdAt'] ?? (round(microtime(true) * 1000)),
             ':pending_at' => $c['pendingAt'] ?? null,
+            ':diskusi_at' => $c['diskusiAt'] ?? null,
             ':progress_at' => $c['progressAt'] ?? null,
             ':completed_at' => $c['completedAt'] ?? null
         ]);

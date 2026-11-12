@@ -143,7 +143,20 @@
         <div class="card-list" id="list-pending" data-status="pending"></div>
       </div>
 
-      <!-- Kolom 3: ON PROGRESS -->
+      <!-- Kolom 3: DISKUSI -->
+      <div class="board-column" data-status="diskusi">
+        <div class="column-header header-diskusi">
+          <div class="column-title">
+            <span class="status-dot dot-diskusi"></span>
+            <h2>Diskusi</h2>
+          </div>
+          <span class="column-count" id="count-diskusi">0</span>
+        </div>
+        <p class="column-desc">Diskusi nominal &amp; obat (Screenshot &amp; catatan staff)</p>
+        <div class="card-list" id="list-diskusi" data-status="diskusi"></div>
+      </div>
+
+      <!-- Kolom 4: ON PROGRESS -->
       <div class="board-column" data-status="onprogress">
         <div class="column-header header-onprogress">
           <div class="column-title">
@@ -156,7 +169,7 @@
         <div class="card-list" id="list-onprogress" data-status="onprogress"></div>
       </div>
 
-      <!-- Kolom 4: DONE -->
+      <!-- Kolom 5: DONE -->
       <div class="board-column" data-status="done">
         <div class="column-header header-done">
           <div class="column-title">
@@ -194,13 +207,26 @@
           <small class="form-hint">Otomatis terisi sesuai sesi login dokter, namun tetap bisa diedit.</small>
         </div>
 
-        <!-- Input 2: Tulisan Resep Dokter / Keterangan -->
+        <!-- Input 2: Nama Pasien (Wajib Diisi) -->
         <div class="form-group">
-          <label for="input-resep">Tulisan Resep Dokter / Keterangan</label>
+          <label for="input-pasien">Nama Pasien <span style="color:#ef4444; font-weight:bold;">*</span></label>
+          <input
+            type="text"
+            id="input-pasien"
+            placeholder="Nama Pasien..."
+            required
+            autocomplete="off"
+          />
+          <small class="form-hint">Wajib diisi sebelum menyimpan resep.</small>
+        </div>
+
+        <!-- Input 3: Tulisan Resep Dokter / Keterangan -->
+        <div class="form-group">
+          <label for="input-resep">Tulisan Resep Dokter / Keterangan <span style="color:#ef4444; font-weight:bold;">*</span></label>
           <textarea
             id="input-resep"
             rows="4"
-            placeholder="Tulis nama pasien dan resep obat di sini...&#10;Contoh: Pasien Bpk. Budi - Paracetamol 3x1, Amoxicillin 3x1"
+            placeholder="Tulis resep obat di sini...&#10;Contoh: Paracetamol 3x1, Amoxicillin 3x1"
             required
           ></textarea>
         </div>

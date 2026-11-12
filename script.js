@@ -100,12 +100,14 @@ const btnCancelModal = document.getElementById('btn-cancel-modal');
 const btnSubmitCard = document.getElementById('btn-submit-card');
 const cardForm = document.getElementById('card-form');
 const inputDokter = document.getElementById('input-dokter');
+const inputPasien = document.getElementById('input-pasien');
 const inputResep = document.getElementById('input-resep');
 
-// Elemen Kolom Kanban
+// Elemen Kolom Kanban (5 Fase)
 const columns = {
   new: document.getElementById('list-new'),
   pending: document.getElementById('list-pending'),
+  diskusi: document.getElementById('list-diskusi'),
   onprogress: document.getElementById('list-onprogress'),
   done: document.getElementById('list-done')
 };
@@ -113,9 +115,39 @@ const columns = {
 const counts = {
   new: document.getElementById('count-new'),
   pending: document.getElementById('count-pending'),
+  diskusi: document.getElementById('count-diskusi'),
   onprogress: document.getElementById('count-onprogress'),
   done: document.getElementById('count-done')
 };
+
+// =========================================================================
+// HELPER EPHEMERAL SCREENSHOT (HANYA DI SESI BROWSER, TIDAK DISIMPAN KE DB)
+// =========================================================================
+function getCardScreenshot(cardId) {
+  return sessionStorage.getItem('resep_screen_' + cardId) || null;
+}
+
+function setCardScreenshot(cardId, dataUrl) {
+  try {
+    sessionStorage.setItem('resep_screen_' + cardId, dataUrl);
+  } catch (e) {
+    console.warn('SessionStorage tidak cukup untuk foto screenshot:', e);
+  }
+}
+
+function deleteCardScreenshot(cardId) {
+  sessionStorage.removeItem('resep_screen_' + cardId);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // =========================================================================
 // 3. INISIALISASI APLIKASI
@@ -328,12 +360,12 @@ function showBoardPage() {
   if (currentUser.role === 'dokter') {
     dokterActions.classList.remove('hidden');
     rolePermissionHint.innerHTML =
-      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit &amp; Hapus (khusus di New &amp; Pending)</em>, serta memindahkan <em>New &rarr; Pending</em> &amp; <em>Done &rarr; History</em> (Notifikasi berbunyi tiap 20 dtk jika ada resep di Done).';
+      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit (New, Pending, Diskusi)</em>, <em>Hapus (New &amp; Pending)</em>, serta memindahkan <em>New &rarr; Pending</em> &amp; <em>Done &rarr; History</em>.';
   } else {
     dokterActions.classList.add('hidden');
     exitDeleteMode();
     rolePermissionHint.innerHTML =
-      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>On Progress &rarr; Done &rarr; History</em> (Notifikasi otomatis berbunyi 1x saat ada resep New, serta tiap 20 dtk di Pending &amp; On Progress).';
+      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>Diskusi &rarr; On Progress &rarr; Done &rarr; History</em>, upload screenshot diskusi (Ctrl+V), dan input catatan harga nominal.';
   }
 
   checkAutoPending();
@@ -633,6 +665,10 @@ function updateLiveTimers() {
       const startPending = card.pendingAt || card.createdAt;
       const pendingElapsed = now - startPending;
       el.textContent = `⚠️ Di Pending: ${formatDuration(pendingElapsed)} (sejak ${formatTimeClock(startPending)})`;
+    } else if (card.status === 'diskusi') {
+      const startDiskusi = card.diskusiAt || card.pendingAt || card.createdAt;
+      const diskusiElapsed = now - startDiskusi;
+      el.textContent = `💬 Di Diskusi: ${formatDuration(diskusiElapsed)} (sejak ${formatTimeClock(startDiskusi)})`;
     } else if (card.status === 'onprogress') {
       const startProgress = card.progressAt || now;
       const progressElapsed = now - startProgress;
@@ -659,29 +695,39 @@ function openAddModal() {
   modalTitle.textContent = 'Tambah Resep Baru';
   btnSubmitCard.textContent = 'Simpan Resep';
   editCardIdInput.value = '';
+  if (inputPasien) inputPasien.value = '';
   inputDokter.value = currentUser.nama;
   // Pulihkan draft tulisan resep jika sebelumnya belum sempat tersimpan
   inputResep.value = sessionStorage.getItem(STORAGE_DRAFT_RESEP_KEY) || '';
 
   modalOverlay.classList.remove('hidden');
-  inputResep.focus();
+  if (inputPasien) {
+    inputPasien.focus();
+  } else {
+    inputResep.focus();
+  }
 }
 
 function openEditModal(card) {
   if (!currentUser || currentUser.role !== 'dokter') return;
-  // Hanya boleh diedit apabila card masih di New atau Pending
-  if (card.status !== 'new' && card.status !== 'pending') return;
+  // Boleh diedit apabila card masih di New, Pending, atau Diskusi
+  if (card.status !== 'new' && card.status !== 'pending' && card.status !== 'diskusi') return;
 
   exitDeleteMode();
 
   modalTitle.textContent = 'Edit Resep';
   btnSubmitCard.textContent = 'Simpan Perubahan';
   editCardIdInput.value = card.id;
+  if (inputPasien) inputPasien.value = card.pasien || '';
   inputDokter.value = card.dokter;
   inputResep.value = card.resep;
 
   modalOverlay.classList.remove('hidden');
-  inputResep.focus();
+  if (inputPasien) {
+    inputPasien.focus();
+  } else {
+    inputResep.focus();
+  }
 }
 
 function closeAddModal() {
@@ -692,16 +738,25 @@ function handleSaveCard(e) {
   e.preventDefault();
   if (!currentUser || currentUser.role !== 'dokter') return;
 
+  const pasienVal = inputPasien ? inputPasien.value.trim() : '';
   const dokterVal = inputDokter.value.trim();
   const resepVal = inputResep.value.trim();
   const editingId = editCardIdInput.value;
 
+  // Nama Pasien WAJIB DIISI (tidak boleh kosong)
+  if (!pasienVal) {
+    alert('Nama Pasien wajib diisi!');
+    if (inputPasien) inputPasien.focus();
+    return;
+  }
+
   if (!dokterVal || !resepVal) return;
 
   if (editingId) {
-    // Mode Edit Card (Hanya jika masih di New atau Pending)
+    // Mode Edit Card (Hanya jika masih di New, Pending, atau Diskusi)
     const target = cards.find((c) => c.id === editingId);
-    if (target && (target.status === 'new' || target.status === 'pending')) {
+    if (target && (target.status === 'new' || target.status === 'pending' || target.status === 'diskusi')) {
+      target.pasien = pasienVal;
       target.dokter = dokterVal;
       target.resep = resepVal;
       target.warna = resolveCardColor(dokterVal);
@@ -711,12 +766,15 @@ function handleSaveCard(e) {
     // Mode Tambah Card Baru
     const newCard = {
       id: 'card-' + Date.now(),
+      pasien: pasienVal,
       dokter: dokterVal,
       resep: resepVal,
+      keteranganFoto: '',
       warna: resolveCardColor(dokterVal),
       status: 'new',
       createdAt: Date.now(),
       pendingAt: null,
+      diskusiAt: null,
       progressAt: null,
       completedAt: null
     };
@@ -821,13 +879,26 @@ function canTransitionStatus(currentStatus, targetStatus) {
 
   // ATURAN STAFF APOTEK:
   // Staff TIDAK BISA memaksa pindah dari "New" ke "Pending".
-  // Staff BISA memindahkan dari "New" atau "Pending" ke "On Progress",
-  // lalu dari "On Progress" ke "Done", dan dari "Done" ke "History".
+  // Staff BISA memindahkan:
+  // - dari "New" atau "Pending" ke "Diskusi"
+  // - dari "New" atau "Pending" ke "On Progress"
+  // - dari "Diskusi" ke "On Progress"
+  // - dari "On Progress" ke "Done"
+  // - dari "Done" ke "History"
   if (currentUser.role === 'apotek') {
+    if (
+      (currentStatus === 'new' || currentStatus === 'pending') &&
+      targetStatus === 'diskusi'
+    ) {
+      return true;
+    }
     if (
       (currentStatus === 'new' || currentStatus === 'pending') &&
       targetStatus === 'onprogress'
     ) {
+      return true;
+    }
+    if (currentStatus === 'diskusi' && targetStatus === 'onprogress') {
       return true;
     }
     if (currentStatus === 'onprogress' && targetStatus === 'done') {
@@ -857,6 +928,8 @@ function updateCardStatus(cardId, newStatus) {
     card.pendingAt = now;
     // Beri jeda setelah card dipindahkan ke pending sebelum notifikasi pending berbunyi
     pendingNotifState.nextFireAt = Math.max(pendingNotifState.nextFireAt, now + NOTIF_PENDING_INITIAL_DELAY_MS);
+  } else if (newStatus === 'diskusi') {
+    card.diskusiAt = now;
   } else if (newStatus === 'onprogress') {
     // Ketika dipindah ke On Progress, timer reset mulai dari 00:00
     card.progressAt = now;
@@ -876,12 +949,13 @@ function updateCardStatus(cardId, newStatus) {
 // =========================================================================
 function renderBoard() {
   Object.keys(columns).forEach((key) => {
-    columns[key].innerHTML = '';
+    if (columns[key]) columns[key].innerHTML = '';
   });
 
   const grouped = {
     new: [],
     pending: [],
+    diskusi: [],
     onprogress: [],
     done: [],
     history: []
@@ -894,13 +968,16 @@ function renderBoard() {
   });
 
   // Update jumlah History di tombol atas
-  countHistory.textContent = grouped.history.length;
+  if (countHistory) countHistory.textContent = grouped.history.length;
 
-  // Render ke-4 kolom utama
-  ['new', 'pending', 'onprogress', 'done'].forEach((statusKey) => {
+  // Render ke-5 kolom utama
+  ['new', 'pending', 'diskusi', 'onprogress', 'done'].forEach((statusKey) => {
     const listEl = columns[statusKey];
-    const items = grouped[statusKey];
-    counts[statusKey].textContent = items.length;
+    if (!listEl) return;
+    const items = grouped[statusKey] || [];
+    if (counts[statusKey]) {
+      counts[statusKey].textContent = items.length;
+    }
 
     if (items.length === 0) {
       const emptyEl = document.createElement('div');
@@ -924,6 +1001,7 @@ function createCardElement(card) {
   const isStaff = currentUser && currentUser.role === 'apotek';
   const isDokter = currentUser && currentUser.role === 'dokter';
   const isDeletablePhase = card.status === 'new' || card.status === 'pending';
+  const canEditPhase = card.status === 'new' || card.status === 'pending' || card.status === 'diskusi';
   const isSelected = selectedCardIds.has(card.id);
 
   const div = document.createElement('div');
@@ -931,7 +1009,7 @@ function createCardElement(card) {
   div.setAttribute('data-id', card.id);
 
   // Drag and Drop:
-  // - Staff Apotek bisa drag card di New, Pending, On Progress (untuk maju ke On Progress / Done)
+  // - Staff Apotek bisa drag card di New, Pending, Diskusi, On Progress (untuk maju ke fase berikutnya)
   // - Dokter bisa drag card di New (untuk dipindah ke Pending)
   const canDrag =
     (isStaff && card.status !== 'done') ||
@@ -966,7 +1044,7 @@ function createCardElement(card) {
     });
   }
 
-  // Bagian Atas Card: Nama Dokter + Tombol Edit / Badge Pilih Hapus
+  // 1. Bagian Atas Card: Nama Dokter + Tombol Edit / Badge Pilih Hapus
   const topRow = document.createElement('div');
   topRow.className = 'card-top';
 
@@ -982,11 +1060,12 @@ function createCardElement(card) {
       selectBadge.textContent = isSelected ? '☑️ Terpilih' : '⬜ Pilih';
       topRow.appendChild(selectBadge);
     }
-  } else if (isDokter && isDeletablePhase) {
+  } else if (isDokter && canEditPhase) {
     const btnEdit = document.createElement('button');
     btnEdit.type = 'button';
     btnEdit.className = 'btn-edit-card';
     btnEdit.textContent = '✏️ Edit';
+    btnEdit.title = 'Edit Nama Pasien & Tulisan Resep';
     btnEdit.addEventListener('click', (e) => {
       e.stopPropagation();
       openEditModal(card);
@@ -994,28 +1073,213 @@ function createCardElement(card) {
     topRow.appendChild(btnEdit);
   }
 
-  // Isi Tulisan Resep Dokter
+  div.appendChild(topRow);
+
+  // 2. Info Nama Pasien (Wajib Tampil Jelas di Card)
+  const pasienBox = document.createElement('div');
+  pasienBox.className = 'card-pasien-box';
+  pasienBox.innerHTML = `<span class="card-pasien-label">👤 Pasien:</span> <span class="card-pasien-name">${escapeHtml(card.pasien || '-')}</span>`;
+  div.appendChild(pasienBox);
+
+  // 3. Isi Tulisan Resep Dokter
   const resepText = document.createElement('div');
   resepText.className = 'card-resep-text';
   resepText.textContent = card.resep;
-
-  div.appendChild(topRow);
   div.appendChild(resepText);
 
-  // Fase DONE: Tidak ada timer/cooldown, tampilkan banner selesai
+  // 4. Area Diskusi Screenshot & Catatan Staff (Aktif di Diskusi atau Ditampilkan jika sudah pernah ada catatan/foto)
+  const currentScreenshot = getCardScreenshot(card.id);
+  const hasDiskusiData = card.status === 'diskusi' || !!currentScreenshot || !!card.keteranganFoto;
+
+  if (hasDiskusiData) {
+    const diskusiBox = document.createElement('div');
+    diskusiBox.className = 'card-diskusi-box';
+
+    const diskusiTitle = document.createElement('div');
+    diskusiTitle.className = 'diskusi-title';
+    diskusiTitle.innerHTML = `<span>💬 Diskusi Nominal &amp; Obat</span>`;
+    diskusiBox.appendChild(diskusiTitle);
+
+    // Bagian Screenshot
+    if (currentScreenshot) {
+      const previewWrap = document.createElement('div');
+      previewWrap.className = 'diskusi-preview-wrap';
+      const img = document.createElement('img');
+      img.className = 'diskusi-preview-img';
+      img.src = currentScreenshot;
+      img.alt = 'Screenshot Diskusi Obat';
+      img.title = 'Klik untuk melihat foto lebih besar';
+      img.addEventListener('click', () => {
+        window.open(currentScreenshot, '_blank');
+      });
+      previewWrap.appendChild(img);
+      diskusiBox.appendChild(previewWrap);
+
+      // Hanya staff yang boleh mengganti atau menghapus foto screenshot
+      if (isStaff && card.status === 'diskusi') {
+        const actWrap = document.createElement('div');
+        actWrap.className = 'diskusi-img-actions';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', () => {
+          if (fileInput.files && fileInput.files[0]) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              setCardScreenshot(card.id, ev.target.result);
+              renderBoard();
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+          }
+        });
+        actWrap.appendChild(fileInput);
+
+        const btnChange = document.createElement('button');
+        btnChange.type = 'button';
+        btnChange.className = 'btn-diskusi-subaction';
+        btnChange.textContent = '🔄 Ganti Foto';
+        btnChange.addEventListener('click', () => fileInput.click());
+
+        const btnDel = document.createElement('button');
+        btnDel.type = 'button';
+        btnDel.className = 'btn-diskusi-subaction btn-diskusi-delete';
+        btnDel.textContent = '🗑️ Hapus Foto';
+        btnDel.addEventListener('click', () => {
+          deleteCardScreenshot(card.id);
+          renderBoard();
+        });
+
+        actWrap.appendChild(btnChange);
+        actWrap.appendChild(btnDel);
+        diskusiBox.appendChild(actWrap);
+      }
+    } else if (card.status === 'diskusi') {
+      // Belum ada screenshot di fase diskusi
+      if (isStaff) {
+        // Staff bisa klik / paste (Ctrl+V) screenshot dari Win+Shift+S
+        const pasteZone = document.createElement('div');
+        pasteZone.className = 'diskusi-paste-zone';
+        pasteZone.tabIndex = 0;
+        pasteZone.innerHTML = `📋 <strong>Klik &amp; Tekan Ctrl+V</strong> (hasil Win+Shift+S)<br><small style="color:#64748b;">atau klik untuk pilih gambar</small>`;
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', () => {
+          if (fileInput.files && fileInput.files[0]) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              setCardScreenshot(card.id, ev.target.result);
+              renderBoard();
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+          }
+        });
+        pasteZone.appendChild(fileInput);
+
+        pasteZone.addEventListener('click', (e) => {
+          if (e.target !== fileInput) fileInput.click();
+        });
+
+        pasteZone.addEventListener('paste', (e) => {
+          const items = (e.clipboardData || window.clipboardData).items;
+          for (let item of items) {
+            if (item.type.indexOf('image') !== -1) {
+              const blob = item.getAsFile();
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                setCardScreenshot(card.id, ev.target.result);
+                renderBoard();
+              };
+              reader.readAsDataURL(blob);
+              e.preventDefault();
+              break;
+            }
+          }
+        });
+
+        diskusiBox.appendChild(pasteZone);
+      } else {
+        // Tampilan untuk dokter jika staf belum pasang screenshot
+        const noImgDiv = document.createElement('div');
+        noImgDiv.style.fontSize = '0.76rem';
+        noImgDiv.style.color = '#64748b';
+        noImgDiv.style.fontStyle = 'italic';
+        noImgDiv.textContent = 'Menunggu foto screenshot dari staff apotek...';
+        diskusiBox.appendChild(noImgDiv);
+      }
+    }
+
+    // Bagian Keterangan Foto / Catatan Nominal Staff
+    const ketWrap = document.createElement('div');
+    ketWrap.className = 'diskusi-keterangan-wrap';
+
+    if (isStaff && card.status === 'diskusi') {
+      // Staff bisa mengedit & menyimpan catatan keterangan foto
+      ketWrap.innerHTML = `<label class="diskusi-keterangan-label">💬 Catatan Staff / Nominal Obat:</label>`;
+      const ketInput = document.createElement('textarea');
+      ketInput.className = 'diskusi-keterangan-input';
+      ketInput.rows = 2;
+      ketInput.placeholder = 'Tulis nominal harga obat / catatan staff di sini...';
+      ketInput.value = card.keteranganFoto || '';
+
+      const btnSaveKet = document.createElement('button');
+      btnSaveKet.type = 'button';
+      btnSaveKet.className = 'btn-save-keterangan';
+      btnSaveKet.textContent = '💾 Simpan Catatan';
+      btnSaveKet.addEventListener('click', () => {
+        card.keteranganFoto = ketInput.value.trim();
+        syncUpsertCardToServer(card);
+        saveCardsToStorage();
+        btnSaveKet.textContent = '✅ Tersimpan!';
+        setTimeout(() => {
+          btnSaveKet.textContent = '💾 Simpan Catatan';
+        }, 1500);
+      });
+
+      ketInput.addEventListener('blur', () => {
+        if (card.keteranganFoto !== ketInput.value.trim()) {
+          card.keteranganFoto = ketInput.value.trim();
+          syncUpsertCardToServer(card);
+          saveCardsToStorage();
+        }
+      });
+
+      ketWrap.appendChild(ketInput);
+      ketWrap.appendChild(btnSaveKet);
+    } else {
+      // Dokter atau fase lanjut: Hanya read-only (Dokter TIDAK BISA merubah keterangan foto)
+      ketWrap.innerHTML = `<div class="diskusi-keterangan-label">💬 Catatan Staff / Nominal Obat:</div>`;
+      const ketRead = document.createElement('div');
+      ketRead.className = 'diskusi-keterangan-readonly';
+      ketRead.textContent = card.keteranganFoto
+        ? card.keteranganFoto
+        : '(Belum ada catatan dari staff apotek)';
+      ketWrap.appendChild(ketRead);
+    }
+
+    diskusiBox.appendChild(ketWrap);
+    div.appendChild(diskusiBox);
+  }
+
+  // 5. Fase DONE vs TIMER (New, Pending, Diskusi, On Progress)
   if (card.status === 'done') {
     const doneBanner = document.createElement('div');
     doneBanner.className = 'status-ready-banner';
     doneBanner.textContent = '✅ Selesai Diracik — Pasien Boleh Ambil di Lt. 1';
     div.appendChild(doneBanner);
   } else {
-    // Fase NEW, PENDING, ON PROGRESS: Tampilkan Timer sesuai aturan
     const metaRow = document.createElement('div');
     metaRow.className = 'card-meta';
 
     const timerSpan = document.createElement('span');
     if (card.status === 'pending') {
       timerSpan.className = 'timer-badge timer-warning';
+    } else if (card.status === 'diskusi') {
+      timerSpan.className = 'timer-badge timer-diskusi';
     } else if (card.status === 'onprogress') {
       timerSpan.className = 'timer-badge timer-progress';
     } else {
@@ -1027,10 +1291,8 @@ function createCardElement(card) {
     div.appendChild(metaRow);
   }
 
-  // Tombol Pindah Fase Terkunci Sesuai Role:
-  // 1) Untuk DOKTER:
-  // - Saat di "New" -> bisa memindahkan manual ke "Pending"
-  // - Saat di "Done" -> bisa menekan "Resep Telah Diambil (Ke History)"
+  // 6. Tombol Pindah Fase Terkunci Sesuai Role
+  // DOKTER:
   if (isDokter && !isDeleteMode) {
     if (card.status === 'new') {
       const controlsDiv = document.createElement('div');
@@ -1061,19 +1323,35 @@ function createCardElement(card) {
     }
   }
 
-  // 2) Untuk STAFF APOTEK:
-  // - Di New / Pending -> Alihkan ke On Progress
-  // - Di On Progress -> Selesai Diracik (Ke Done)
-  // - Di Done -> Resep Telah Diambil (Ke History)
+  // STAFF APOTEK:
   if (isStaff) {
     const controlsDiv = document.createElement('div');
     controlsDiv.className = 'card-controls';
 
     if (card.status === 'new' || card.status === 'pending') {
+      // Pilihan ke Diskusi ATAU langsung ke On Progress
+      const btnToDiskusi = document.createElement('button');
+      btnToDiskusi.type = 'button';
+      btnToDiskusi.className = 'btn-quick-action btn-to-diskusi';
+      btnToDiskusi.textContent = '💬 Buka Diskusi (Nominal/Obat)';
+      btnToDiskusi.addEventListener('click', () =>
+        updateCardStatus(card.id, 'diskusi')
+      );
+      controlsDiv.appendChild(btnToDiskusi);
+
       const btnToProgress = document.createElement('button');
       btnToProgress.type = 'button';
       btnToProgress.className = 'btn-quick-action btn-to-progress';
       btnToProgress.textContent = '⚡ Alihkan ke On Progress';
+      btnToProgress.addEventListener('click', () =>
+        updateCardStatus(card.id, 'onprogress')
+      );
+      controlsDiv.appendChild(btnToProgress);
+    } else if (card.status === 'diskusi') {
+      const btnToProgress = document.createElement('button');
+      btnToProgress.type = 'button';
+      btnToProgress.className = 'btn-quick-action btn-to-progress';
+      btnToProgress.textContent = '⚡ Selesai Diskusi -> On Progress';
       btnToProgress.addEventListener('click', () =>
         updateCardStatus(card.id, 'onprogress')
       );
@@ -1213,8 +1491,26 @@ function renderHistoryList() {
     resepDiv.className = 'history-item-resep';
     resepDiv.textContent = item.resep;
 
+    // Tampilkan Nama Pasien di History
+    const pasienDiv = document.createElement('div');
+    pasienDiv.className = 'card-pasien-box';
+    pasienDiv.style.margin = '6px 0';
+    pasienDiv.innerHTML = `<span class="card-pasien-label">👤 Pasien:</span> <span class="card-pasien-name">${escapeHtml(item.pasien || '-')}</span>`;
+
     box.appendChild(top);
+    box.appendChild(pasienDiv);
     box.appendChild(resepDiv);
+
+    if (item.keteranganFoto) {
+      const ketDiv = document.createElement('div');
+      ketDiv.style.marginTop = '6px';
+      ketDiv.style.fontSize = '0.78rem';
+      ketDiv.style.color = '#0e7490';
+      ketDiv.style.fontWeight = '500';
+      ketDiv.textContent = `💬 Catatan Staff / Diskusi: ${item.keteranganFoto}`;
+      box.appendChild(ketDiv);
+    }
+
     historyList.appendChild(box);
   });
 }
@@ -1228,12 +1524,14 @@ function exportHistoryToCSV() {
     return;
   }
 
-  const headers = ['ID Card', 'Nama Dokter', 'Resep / Keterangan', 'Tanggal & Waktu Diambil'];
+  const headers = ['ID Card', 'Nama Pasien', 'Nama Dokter', 'Resep / Keterangan', 'Catatan Staff / Diskusi', 'Tanggal & Waktu Diambil'];
   const rows = filteredCards.map((c) => {
     const waktu = c.completedAt ? new Date(c.completedAt).toLocaleString('id-ID') : '-';
+    const cleanPasien = `"${(c.pasien || '').replace(/"/g, '""')}"`;
     const cleanDokter = `"${(c.dokter || '').replace(/"/g, '""')}"`;
     const cleanResep = `"${(c.resep || '').replace(/"/g, '""')}"`;
-    return [c.id, cleanDokter, cleanResep, `"${waktu}"`].join(',');
+    const cleanKet = `"${(c.keteranganFoto || '').replace(/"/g, '""')}"`;
+    return [c.id, cleanPasien, cleanDokter, cleanResep, cleanKet, `"${waktu}"`].join(',');
   });
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');

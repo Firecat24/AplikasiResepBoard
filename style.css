@@ -405,13 +405,13 @@ body {
   font-weight: 500;
 }
 
-/* ================= KANBAN BOARD 4 FASE ================= */
+/* ================= KANBAN BOARD 5 FASE ================= */
 .board-columns {
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(260px, 1fr));
-  gap: 18px;
-  padding: 20px 24px;
+  grid-template-columns: repeat(5, minmax(230px, 1fr));
+  gap: 16px;
+  padding: 18px 20px;
   overflow-x: auto;
   align-items: start;
 }
@@ -468,6 +468,10 @@ body {
 
 .dot-pending {
   background: #f59e0b;
+}
+
+.dot-diskusi {
+  background: #0891b2;
 }
 
 .dot-onprogress {
@@ -624,6 +628,33 @@ body {
   border-color: #2563eb;
 }
 
+.card-pasien-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 5px 8px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.card-pasien-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.card-pasien-name {
+  color: #0f172a;
+  word-break: break-word;
+}
+
 .card-resep-text {
   font-size: 0.92rem;
   color: #1e293b;
@@ -631,6 +662,169 @@ body {
   line-height: 1.45;
   margin-bottom: 10px;
   font-weight: 500;
+}
+
+/* ================= AREA DISKUSI (SCREENSHOT & KETERANGAN) ================= */
+.card-diskusi-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diskusi-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #0e7490;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.diskusi-paste-zone {
+  border: 2px dashed #cbd5e1;
+  background: #ffffff;
+  border-radius: 6px;
+  padding: 12px 10px;
+  text-align: center;
+  font-size: 0.78rem;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s;
+  outline: none;
+}
+
+.diskusi-paste-zone:hover,
+.diskusi-paste-zone:focus {
+  border-color: #0891b2;
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.diskusi-paste-zone.has-paste-focus {
+  border-color: #0891b2;
+  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.18);
+}
+
+.diskusi-preview-wrap {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  background: #000000;
+  text-align: center;
+}
+
+.diskusi-preview-img {
+  max-width: 100%;
+  max-height: 190px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.diskusi-preview-img:hover {
+  opacity: 0.92;
+}
+
+.diskusi-img-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.btn-diskusi-subaction {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-diskusi-subaction:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.btn-diskusi-delete {
+  color: #dc2626;
+  border-color: #fca5a5;
+}
+
+.btn-diskusi-delete:hover {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* Kolom Keterangan Foto */
+.diskusi-keterangan-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diskusi-keterangan-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #475569;
+}
+
+.diskusi-keterangan-input {
+  width: 100%;
+  font-size: 0.8rem;
+  font-family: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  resize: vertical;
+  min-height: 48px;
+  outline: none;
+}
+
+.diskusi-keterangan-input:focus {
+  border-color: #0891b2;
+  box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
+}
+
+.diskusi-keterangan-readonly {
+  font-size: 0.8rem;
+  color: #1e293b;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.btn-save-keterangan {
+  align-self: flex-end;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: none;
+  background: #0891b2;
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-save-keterangan:hover {
+  background: #0e7490;
 }
 
 .card-meta {
@@ -650,6 +844,11 @@ body {
 
 .timer-warning {
   color: #b45309;
+  font-weight: 700;
+}
+
+.timer-diskusi {
+  color: #0e7490;
   font-weight: 700;
 }
 
@@ -695,6 +894,15 @@ body {
 
 .btn-to-pending:hover {
   background: #d97706;
+}
+
+.btn-to-diskusi {
+  background: #0891b2;
+  color: #ffffff;
+}
+
+.btn-to-diskusi:hover {
+  background: #0e7490;
 }
 
 .btn-to-progress {
