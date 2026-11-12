@@ -153,16 +153,18 @@ function compressImage(fileOrBlob, maxWidth = 900, quality = 0.65) {
   });
 }
 
-async function handleIncomingImage(card, fileOrBlob) {
-  if (!card || !fileOrBlob) return;
+async function handleIncomingImage(cardRef, fileOrBlob) {
+  if (!cardRef || !fileOrBlob) return;
   try {
-    showToastMessage('📸 Memproses Foto...', 'Sedang mengompres & mengirim ke Dokter...', 'pending');
     const compressedDataUrl = await compressImage(fileOrBlob);
+    const card = cards.find((c) => c.id === cardRef.id) || cardRef;
     card.foto = compressedDataUrl;
-    syncUpsertCardToServer(card);
     saveCardsToStorage();
     renderBoard();
-    showToastMessage('✅ Berhasil!', 'Foto screenshot berhasil dikirim ke Dokter.', 'done');
+    const ok = await syncUpsertCardToServer(card);
+    if (ok) {
+      showToastMessage('✅ Berhasil!', 'Foto screenshot terkirim ke Dokter.', 'done');
+    }
   } catch (err) {
     console.error('Gagal memproses gambar:', err);
     alert('Gagal memproses gambar screenshot. Silakan coba lagi.');
@@ -236,6 +238,14 @@ function initApp() {
 // =========================================================================
 // 4. MANAJEMEN STORAGE (LOCALSTORAGE + DATABASE MYSQL CPANEL)
 // =========================================================================
+// Penanda perubahan lokal yang belum dikonfirmasi server (agar tidak ditimpa polling)
+let pendingSyncCount = 0;
+let lastLocalChangeAt = 0;
+const LOCAL_CHANGE_GRACE_MS = 5000;
+
+// Draft ketikan catatan staff per card (agar tidak hilang saat board di-render ulang)
+const ketDrafts = {};
+
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
   try {
@@ -247,8 +257,13 @@ async function fetchCardsFromServer() {
     if (data && data.ok && Array.isArray(data.cards)) {
       useServerDB = true;
 
-      // Cegah re-render saat user sedang mengetik catatan staff agar kursor & fokus tidak hilang
-      if (isUserEditingText()) {
+      // Jangan timpa data lokal jika user sedang mengetik,
+      // masih ada simpanan yang sedang dikirim, atau baru saja ada perubahan lokal
+      if (
+        isUserEditingText() ||
+        pendingSyncCount > 0 ||
+        Date.now() - lastLocalChangeAt < LOCAL_CHANGE_GRACE_MS
+      ) {
         return;
       }
 
@@ -268,9 +283,11 @@ async function fetchCardsFromServer() {
 }
 
 async function syncUpsertCardToServer(card) {
-  if (!useServerDB) return;
+  lastLocalChangeAt = Date.now();
+  if (!useServerDB) return true;
+  pendingSyncCount++;
   try {
-    await fetch(API_URL, {
+    const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -278,8 +295,21 @@ async function syncUpsertCardToServer(card) {
       },
       body: JSON.stringify({ action: 'upsert', card })
     });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* respon bukan JSON */ }
+    if (!res.ok || !data || !data.ok) {
+      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+      console.error('Gagal simpan ke server:', msg);
+      showToastMessage('❌ Gagal Menyimpan', msg, 'pending');
+      return false;
+    }
+    return true;
   } catch (err) {
-    // Abaikan jika sedang offline
+    showToastMessage('❌ Gagal Menyimpan', 'Koneksi ke server terputus', 'pending');
+    return false;
+  } finally {
+    pendingSyncCount = Math.max(0, pendingSyncCount - 1);
+    lastLocalChangeAt = Date.now();
   }
 }
 
@@ -1203,17 +1233,8 @@ function createCardElement(card) {
           pasteZone.innerHTML = `📋 <strong>Klik di sini</strong> lalu tekan <strong>Ctrl + V</strong><br><small style="color:#0f766e;">(Screenshot Win + Shift + S)</small>`;
         });
 
-        pasteZone.addEventListener('paste', (e) => {
-          const items = (e.clipboardData || window.clipboardData).items;
-          for (let item of items) {
-            if (item.type.indexOf('image') !== -1) {
-              const blob = item.getAsFile();
-              handleIncomingImage(card, blob);
-              e.preventDefault();
-              break;
-            }
-          }
-        });
+        // Catatan: event paste (Ctrl+V) ditangani oleh listener global di setupEventListeners
+        // (memakai activePasteCardId) agar foto tidak terproses 2x.
 
         diskusiBox.appendChild(pasteZone);
 
@@ -1267,33 +1288,43 @@ function createCardElement(card) {
       ketInput.className = 'diskusi-keterangan-input';
       ketInput.rows = 2;
       ketInput.placeholder = 'Tulis nominal harga obat / catatan staff di sini...';
-      ketInput.value = card.keteranganFoto || '';
+      // Pakai draft ketikan jika ada (agar tidak hilang saat board di-render ulang)
+      ketInput.value = ketDrafts[card.id] !== undefined ? ketDrafts[card.id] : (card.keteranganFoto || '');
 
-      // Simpan perubahan teks secara real-time ke memori lokal saat user mengetik
+      // Ketikan disimpan sebagai draft dulu; baru dikirim ke server saat klik Simpan / keluar kolom
       ketInput.addEventListener('input', () => {
-        card.keteranganFoto = ketInput.value;
+        ketDrafts[card.id] = ketInput.value;
+        lastLocalChangeAt = Date.now();
       });
+
+      const saveKeterangan = async () => {
+        const target = cards.find((c) => c.id === card.id) || card;
+        const val = ketInput.value.trim();
+        if (val === (target.keteranganFoto || '') && ketDrafts[card.id] === undefined) return true;
+        target.keteranganFoto = val;
+        saveCardsToStorage();
+        const ok = await syncUpsertCardToServer(target);
+        if (ok) delete ketDrafts[card.id];
+        return ok;
+      };
 
       const btnSaveKet = document.createElement('button');
       btnSaveKet.type = 'button';
       btnSaveKet.className = 'btn-save-keterangan';
       btnSaveKet.textContent = '💾 Simpan Catatan';
-      btnSaveKet.addEventListener('click', () => {
-        card.keteranganFoto = ketInput.value.trim();
-        syncUpsertCardToServer(card);
-        saveCardsToStorage();
-        btnSaveKet.textContent = '✅ Tersimpan!';
+      // mousedown mencegah textarea kehilangan fokus duluan sebelum tombol tertekan
+      btnSaveKet.addEventListener('mousedown', (e) => e.preventDefault());
+      btnSaveKet.addEventListener('click', async () => {
+        btnSaveKet.textContent = '⏳ Menyimpan...';
+        const ok = await saveKeterangan();
+        btnSaveKet.textContent = ok ? '✅ Tersimpan!' : '❌ Gagal';
         setTimeout(() => {
           btnSaveKet.textContent = '💾 Simpan Catatan';
         }, 1500);
       });
 
       ketInput.addEventListener('blur', () => {
-        if (card.keteranganFoto !== ketInput.value.trim()) {
-          card.keteranganFoto = ketInput.value.trim();
-          syncUpsertCardToServer(card);
-          saveCardsToStorage();
-        }
+        saveKeterangan();
       });
 
       ketWrap.appendChild(ketInput);

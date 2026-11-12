@@ -117,6 +117,38 @@ try {
 }
 
 // =========================================================================
+// AUTO-UPDATE STRUKTUR TABEL (Jika kolom baru belum dibuat di phpMyAdmin)
+// =========================================================================
+function ensureSchema($pdo) {
+    $needed = [
+        'pasien'          => "VARCHAR(150) NOT NULL DEFAULT ''",
+        'foto'            => "MEDIUMTEXT NULL",
+        'keterangan_foto' => "TEXT NULL",
+        'diskusi_at'      => "BIGINT NULL DEFAULT NULL"
+    ];
+    $existing = [];
+    foreach ($pdo->query("SHOW COLUMNS FROM `resep_cards`")->fetchAll() as $col) {
+        $existing[$col['Field']] = $col['Type'];
+    }
+    foreach ($needed as $name => $def) {
+        if (!isset($existing[$name])) {
+            $pdo->exec("ALTER TABLE `resep_cards` ADD COLUMN `$name` $def");
+        }
+    }
+    if (isset($existing['status']) && strpos($existing['status'], 'diskusi') === false) {
+        $pdo->exec("ALTER TABLE `resep_cards` MODIFY COLUMN `status` ENUM('new','pending','diskusi','onprogress','done','history') NOT NULL DEFAULT 'new'");
+    }
+}
+
+if ($method === 'POST') {
+    try {
+        ensureSchema($pdo);
+    } catch (PDOException $e) {
+        // Lanjutkan saja; error detail akan muncul saat upsert
+    }
+}
+
+// =========================================================================
 // GET: Ambil seluruh data Card & History dari Database MySQL
 // =========================================================================
 if ($method === 'GET') {
@@ -179,6 +211,7 @@ if ($method === 'POST') {
               `completed_at` = VALUES(`completed_at`)
         ");
 
+        try {
         $stmt->execute([
             ':id' => $c['id'],
             ':pasien' => trim($c['pasien'] ?? ''),
@@ -194,6 +227,11 @@ if ($method === 'POST') {
             ':progress_at' => $c['progressAt'] ?? null,
             ':completed_at' => $c['completedAt'] ?? null
         ]);
+        } catch (PDOException $e) {
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Gagal simpan: ' . $e->getMessage()]);
+            exit;
+        }
 
         echo json_encode(['ok' => true]);
         exit;
