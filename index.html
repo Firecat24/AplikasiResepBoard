@@ -7,8 +7,10 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Resep Board</title>
-  <link rel="icon" type="image/x-icon" href="favicon.ico" />
-  <link rel="shortcut icon" href="favicon.ico" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico?v=2" />
+  <link rel="shortcut icon" type="image/x-icon" href="favicon.ico?v=2" />
+  <link rel="icon" type="image/png" sizes="32x32" href="logo_dmu.png?v=2" />
+  <link rel="apple-touch-icon" href="logo_dmu.png?v=2" />
   <link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
@@ -18,7 +20,7 @@
     <div class="login-card">
       <div class="login-header">
         <div class="logo-icon">
-          <img src="logo_dmu.png" alt="Logo DMU" class="login-logo-img" />
+          <img src="logo_dmu.png?v=2" alt="Logo DMU" class="login-logo-img" />
         </div>
         <h1>ResepBoard</h1>
         <p>Sistem Pantau Resep Dokter &amp; Apotek</p>
@@ -55,7 +57,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <span class="brand-logo">
-          <img src="logo_dmu.png" alt="Logo DMU" class="brand-logo-img" />
+          <img src="logo_dmu.png?v=2" alt="Logo DMU" class="brand-logo-img" />
           <span>ResepBoard</span>
         </span>
         <span class="brand-subtitle">Status Resep Dokter &amp; Apotek Lt. 1</span>
@@ -311,6 +313,16 @@
   <!-- Container Toast Notifikasi Layar Staff -->
   <div id="staff-toast-container" class="staff-toast-container"></div>
 
-  <script src="load_js.php?v=1"></script>
+  <!-- Smart Script Loader: Mendukung Integrated Browser / Localhost statis sekaligus Server Produksi cPanel -->
+  <script>
+    (function() {
+      var isLocalDev = window.location.protocol === 'file:' || 
+                       window.location.hostname === 'localhost' || 
+                       window.location.hostname === '127.0.0.1';
+      var script = document.createElement('script');
+      script.src = isLocalDev ? 'script.js?v=2' : 'load_js.php?v=2';
+      document.body.appendChild(script);
+    })();
+  </script>
 </body>
 </html>

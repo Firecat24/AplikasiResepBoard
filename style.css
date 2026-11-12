@@ -79,19 +79,20 @@ body {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .login-logo-img {
-  width: 76px;
-  height: 76px;
+  width: 96px;
+  height: 96px;
   object-fit: contain;
-  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.08));
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.08));
 }
 
 .login-header h1 {
-  font-size: 1.5rem;
+  font-size: 1.55rem;
   color: #0f172a;
+  margin-top: 2px;
   margin-bottom: 4px;
 }
 
@@ -242,13 +243,13 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   font-weight: 700;
 }
 
 .brand-logo-img {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
   vertical-align: middle;
 }

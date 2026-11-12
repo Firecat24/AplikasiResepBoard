@@ -6,9 +6,9 @@ Options -Indexes
   Require all denied
 </FilesMatch>
 
-# 3. Paksa browser user selalu mengambil versi terbaru saat di-refresh
+# 3. Paksa browser user selalu mengambil versi terbaru saat di-refresh (termasuk icon & gambar logo)
 <IfModule mod_headers.c>
-  <FilesMatch "\.(html|htm|js|css|php)$">
+  <FilesMatch "\.(html|htm|js|css|php|ico|png|jpe?g|svg)$">
     FileETag None
     Header unset ETag
     Header set Cache-Control "max-age=0, no-cache, no-store, must-revalidate"
