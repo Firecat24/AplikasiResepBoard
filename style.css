@@ -1183,3 +1183,92 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* ================= POPUP LIHAT FOTO (ZOOM IN / OUT) ================= */
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(15, 23, 42, 0.92);
+  display: flex;
+  flex-direction: column;
+}
+
+.image-viewer.hidden {
+  display: none;
+}
+
+.image-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.iv-btn {
+  background: #ffffff;
+  color: #0f172a;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.iv-btn:hover {
+  background: #e2e8f0;
+}
+
+.iv-close {
+  background: #ef4444;
+  color: #ffffff;
+  margin-left: 12px;
+}
+
+.iv-close:hover {
+  background: #dc2626;
+}
+
+.iv-zoom-label {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  min-width: 52px;
+  text-align: center;
+}
+
+.image-viewer-stage {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+}
+
+.image-viewer-stage.is-panning {
+  cursor: grabbing;
+}
+
+.image-viewer-img {
+  max-width: 92vw;
+  max-height: 82vh;
+  transform-origin: center center;
+  transition: transform 0.08s ease-out;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  background: #ffffff;
+  pointer-events: none;
+}
+
+.image-viewer-hint {
+  text-align: center;
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  padding: 8px;
+}

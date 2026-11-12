@@ -286,6 +286,21 @@
     </div>
   </div>
 
+  <!-- ================= POPUP LIHAT FOTO (ZOOM IN / OUT) ================= -->
+  <div id="image-viewer" class="image-viewer hidden">
+    <div class="image-viewer-toolbar">
+      <button type="button" id="iv-zoom-out" class="iv-btn" title="Perkecil (-)">➖</button>
+      <span id="iv-zoom-label" class="iv-zoom-label">100%</span>
+      <button type="button" id="iv-zoom-in" class="iv-btn" title="Perbesar (+)">➕</button>
+      <button type="button" id="iv-reset" class="iv-btn" title="Kembali ke ukuran awal (0)">⟲ Reset</button>
+      <button type="button" id="iv-close" class="iv-btn iv-close" title="Tutup (Esc)">✕</button>
+    </div>
+    <div id="image-viewer-stage" class="image-viewer-stage">
+      <img id="image-viewer-img" class="image-viewer-img" alt="Foto Diskusi" draggable="false" />
+    </div>
+    <div class="image-viewer-hint">Scroll mouse untuk zoom • Klik &amp; geser untuk menggeser foto • Klik 2x untuk zoom cepat • Esc untuk tutup</div>
+  </div>
+
   <!-- Container Toast Notifikasi Layar Staff -->
   <div id="staff-toast-container" class="staff-toast-container"></div>
 

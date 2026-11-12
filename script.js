@@ -125,7 +125,7 @@ let activePasteCardId = null;
 // =========================================================================
 // HELPER KOMPRESI & PENGIRIMAN FOTO SCREENSHOT (RINGAN & HEMAT KUOTA)
 // =========================================================================
-function compressImage(fileOrBlob, maxWidth = 900, quality = 0.65) {
+function compressImage(fileOrBlob, maxWidth = 1600, quality = 0.8) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = reject;
@@ -171,6 +171,109 @@ async function handleIncomingImage(cardRef, fileOrBlob) {
   }
 }
 
+// =========================================================================
+// POPUP LIHAT FOTO (ZOOM IN / OUT + GESER)
+// =========================================================================
+const ivState = { scale: 1, x: 0, y: 0, panning: false, startX: 0, startY: 0 };
+const IV_MIN_SCALE = 0.5;
+const IV_MAX_SCALE = 6;
+
+function ivApply() {
+  const img = document.getElementById('image-viewer-img');
+  const label = document.getElementById('iv-zoom-label');
+  if (!img) return;
+  img.style.transform = `translate(${ivState.x}px, ${ivState.y}px) scale(${ivState.scale})`;
+  if (label) label.textContent = `${Math.round(ivState.scale * 100)}%`;
+}
+
+function ivSetScale(newScale) {
+  ivState.scale = Math.min(IV_MAX_SCALE, Math.max(IV_MIN_SCALE, newScale));
+  if (ivState.scale <= 1) {
+    ivState.x = 0;
+    ivState.y = 0;
+  }
+  ivApply();
+}
+
+function ivReset() {
+  ivState.scale = 1;
+  ivState.x = 0;
+  ivState.y = 0;
+  ivApply();
+}
+
+function openImageViewer(src) {
+  const viewer = document.getElementById('image-viewer');
+  const img = document.getElementById('image-viewer-img');
+  if (!viewer || !img || !src) return;
+  img.src = src;
+  ivReset();
+  viewer.classList.remove('hidden');
+}
+
+function closeImageViewer() {
+  const viewer = document.getElementById('image-viewer');
+  if (viewer) viewer.classList.add('hidden');
+}
+
+function setupImageViewer() {
+  const viewer = document.getElementById('image-viewer');
+  const stage = document.getElementById('image-viewer-stage');
+  if (!viewer || !stage) return;
+
+  document.getElementById('iv-zoom-in').addEventListener('click', () => ivSetScale(ivState.scale * 1.25));
+  document.getElementById('iv-zoom-out').addEventListener('click', () => ivSetScale(ivState.scale / 1.25));
+  document.getElementById('iv-reset').addEventListener('click', ivReset);
+  document.getElementById('iv-close').addEventListener('click', closeImageViewer);
+
+  // Zoom pakai scroll mouse
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    ivSetScale(ivState.scale * factor);
+  }, { passive: false });
+
+  // Klik 2x untuk zoom cepat 2.5x / kembali normal
+  stage.addEventListener('dblclick', () => {
+    if (ivState.scale > 1) ivReset();
+    else ivSetScale(2.5);
+  });
+
+  // Geser foto (pan) dengan klik & tarik
+  stage.addEventListener('mousedown', (e) => {
+    ivState.panning = true;
+    ivState.moved = false;
+    ivState.startX = e.clientX - ivState.x;
+    ivState.startY = e.clientY - ivState.y;
+    stage.classList.add('is-panning');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!ivState.panning) return;
+    ivState.x = e.clientX - ivState.startX;
+    ivState.y = e.clientY - ivState.startY;
+    ivState.moved = true;
+    ivApply();
+  });
+  window.addEventListener('mouseup', () => {
+    ivState.panning = false;
+    stage.classList.remove('is-panning');
+  });
+
+  // Klik area gelap di luar foto (tanpa menggeser) untuk menutup
+  stage.addEventListener('click', (e) => {
+    if (e.target === stage && !ivState.moved && ivState.scale === 1) closeImageViewer();
+  });
+
+  // Keyboard: Esc tutup, +/- zoom, 0 reset
+  document.addEventListener('keydown', (e) => {
+    if (viewer.classList.contains('hidden')) return;
+    if (e.key === 'Escape') closeImageViewer();
+    else if (e.key === '+' || e.key === '=') ivSetScale(ivState.scale * 1.25);
+    else if (e.key === '-') ivSetScale(ivState.scale / 1.25);
+    else if (e.key === '0') ivReset();
+  });
+}
+
 function escapeHtml(str) {
   if (!str) return '';
   return String(str)
@@ -196,6 +299,7 @@ function initApp() {
   loadCardsFromStorage();
   checkSavedSession();
   setupEventListeners();
+  setupImageViewer();
 
   // Coba ambil data dari Database MySQL cPanel (api.php) jika sudah di-hosting
   fetchCardsFromServer();
@@ -1155,9 +1259,9 @@ function createCardElement(card) {
       img.className = 'diskusi-preview-img';
       img.src = currentScreenshot;
       img.alt = 'Screenshot Diskusi Obat';
-      img.title = 'Klik untuk melihat foto lebih besar';
+      img.title = 'Klik untuk memperbesar foto';
       img.addEventListener('click', () => {
-        window.open(currentScreenshot, '_blank');
+        openImageViewer(currentScreenshot);
       });
       previewWrap.appendChild(img);
       diskusiBox.appendChild(previewWrap);
