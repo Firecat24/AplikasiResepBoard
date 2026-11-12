@@ -1,8 +1,24 @@
 // =========================================================================
-// 1. KONFIGURASI APLIKASI (AKUN LOGIN DISIMPAN AMAN DI SERVER PHP)
+// 1. KONFIGURASI WAKTU & APLIKASI
+//    (Anda dapat mengubah durasi waktu di bawah ini dengan mudah)
 // =========================================================================
-// Batas waktu otomatis pindah dari "New" ke "Pending" = 2 Menit (120.000 ms)
+// Waktu otomatis pindah dari "New" ke "Pending" (Default: 2 menit)
 const PENDING_TIMEOUT_MS = 2 * 60 * 1000;
+
+// Jeda awal saat resep baru dipindahkan ke Pending sebelum notifikasi berbunyi (Default: 20 detik)
+const NOTIF_PENDING_INITIAL_DELAY_MS = 20 * 1000;
+
+// Interval pengingat berkala untuk Staff Apotek di kolom Pending (Default: 20 detik)
+const NOTIF_PENDING_INTERVAL_MS = 20 * 1000;
+
+// Interval pengingat berkala untuk Staff Apotek di kolom On Progress (Default: 20 detik)
+const NOTIF_PROGRESS_INTERVAL_MS = 20 * 1000;
+
+// Interval pengingat berkala untuk Dokter di kolom Done / Obat Selesai (Default: 20 detik)
+const NOTIF_DONE_INTERVAL_MS = 20 * 1000;
+
+// Jeda sebelum notifikasi berulang kembali setelah user membuka/melihat tab web (Default: 20 detik)
+const NOTIF_RETURN_PAGE_DELAY_MS = 20 * 1000;
 
 const STORAGE_CARDS_KEY = 'mediboard_resep_cards_v2';
 const STORAGE_SESSION_KEY = 'mediboard_logged_user';
@@ -50,8 +66,9 @@ const btnEnableNotif = document.getElementById('btn-enable-notif');
 const staffToastContainer = document.getElementById('staff-toast-container');
 
 // State Notifikasi Khusus Staff Apotek & Dokter
-// - Staff: Pending (10s), On Progress (20s)
-// - Dokter: Done (20s)
+// - Staff : New (1x saja per card baru), Pending (tiap 20s, jeda awal 20s setelah dipindah), On Progress (tiap 20s)
+// - Dokter: Done (tiap 20s)
+const notifiedNewCardIds = new Set();
 const pendingNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
 const progressNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
 const doneNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
@@ -316,7 +333,7 @@ function showBoardPage() {
     dokterActions.classList.add('hidden');
     exitDeleteMode();
     rolePermissionHint.innerHTML =
-      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>On Progress &rarr; Done &rarr; History</em> (Notifikasi otomatis berbunyi tiap 10 dtk di Pending &amp; 20 dtk di On Progress sampai Anda membuka web).';
+      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>On Progress &rarr; Done &rarr; History</em> (Notifikasi otomatis berbunyi 1x saat ada resep New, serta tiap 20 dtk di Pending &amp; On Progress).';
   }
 
   checkAutoPending();
@@ -336,6 +353,8 @@ function checkAutoPending() {
       card.pendingAt = card.createdAt + PENDING_TIMEOUT_MS;
       hasChanged = true;
       syncUpsertCardToServer(card);
+      // Beri jeda sebelum notifikasi pending pertama kali berbunyi
+      pendingNotifState.nextFireAt = Math.max(pendingNotifState.nextFireAt, now + NOTIF_PENDING_INITIAL_DELAY_MS);
     }
   });
 
@@ -381,9 +400,9 @@ function onUserReturnToPage() {
   pendingNotifState.dismissedByClick = false;
   progressNotifState.dismissedByClick = false;
   doneNotifState.dismissedByClick = false;
-  pendingNotifState.nextFireAt = Date.now() + 10 * 1000;
-  progressNotifState.nextFireAt = Date.now() + 20 * 1000;
-  doneNotifState.nextFireAt = Date.now() + 20 * 1000;
+  pendingNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
+  progressNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
+  doneNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
 
   if (pendingNotifState.activeNotif) {
     pendingNotifState.activeNotif.close();
@@ -409,8 +428,12 @@ function playNotifBeep(type) {
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = 'sine';
-    // Nada Pending (880Hz), On Progress (660Hz), Done (1046Hz nada tinggi selesai)
-    const freq = type === 'pending' ? 880 : (type === 'done' ? 1046 : 660);
+    // Nada New (520Hz lembut), Pending (880Hz), On Progress (660Hz), Done (1046Hz nada tinggi selesai)
+    let freq = 660;
+    if (type === 'new') freq = 520;
+    else if (type === 'pending') freq = 880;
+    else if (type === 'done') freq = 1046;
+
     osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
     gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
@@ -427,7 +450,11 @@ function playNotifBeep(type) {
 function showToastMessage(title, body, type) {
   if (!staffToastContainer) return;
   const toast = document.createElement('div');
-  const cls = type === 'pending' ? 'toast-pending' : (type === 'done' ? 'toast-done' : 'toast-progress');
+  let cls = 'toast-progress';
+  if (type === 'new') cls = 'toast-new';
+  else if (type === 'pending') cls = 'toast-pending';
+  else if (type === 'done') cls = 'toast-done';
+
   toast.className = `staff-toast ${cls}`;
   toast.textContent = `${title} — ${body}`;
   staffToastContainer.appendChild(toast);
@@ -476,9 +503,9 @@ function checkStaffNotifications() {
   // Jika halaman web sedang dibuka aktif di layar (tidak di-minimize/tertutup tab lain),
   // user sudah melihat board secara langsung, jadi tidak perlu memicu spam notifikasi desktop
   if (!document.hidden && document.hasFocus && document.hasFocus()) {
-    pendingNotifState.nextFireAt = Date.now() + 10 * 1000;
-    progressNotifState.nextFireAt = Date.now() + 20 * 1000;
-    doneNotifState.nextFireAt = Date.now() + 20 * 1000;
+    pendingNotifState.nextFireAt = Date.now() + NOTIF_PENDING_INTERVAL_MS;
+    progressNotifState.nextFireAt = Date.now() + NOTIF_PROGRESS_INTERVAL_MS;
+    doneNotifState.nextFireAt = Date.now() + NOTIF_DONE_INTERVAL_MS;
     return;
   }
 
@@ -509,35 +536,51 @@ function checkStaffNotifications() {
       const body = `Pasien boleh turun ke Lt. 1: ${firstCard.resep.slice(0, 70)}`;
 
       sendDesktopNotification(title, body, 'done', doneNotifState);
-      doneNotifState.nextFireAt = now + 20 * 1000; // Putar ulang setiap 20 detik sampai dibuka
+      doneNotifState.nextFireAt = now + NOTIF_DONE_INTERVAL_MS; // Putar ulang setiap interval selesai
     }
     return;
   }
 
   // ==========================================
-  // 2) NOTIFIKASI UNTUK STAFF APOTEK: PENDING (10s) & ON PROGRESS (20s)
+  // 2) NOTIFIKASI UNTUK STAFF APOTEK: NEW (1x), PENDING (20s, jeda awal 20s), & ON PROGRESS (20s)
   // ==========================================
   if (currentUser.role === 'apotek') {
+    const newCards = cards.filter((c) => c.status === 'new');
     const pendingCards = cards.filter((c) => c.status === 'pending');
     const progressCards = cards.filter((c) => c.status === 'onprogress');
 
-    // a. NOTIFIKASI PENDING: Setiap 10 detik sekali sampai user kembali ke web
+    // a. NOTIFIKASI RESEP BARU (NEW): Hanya 1x saja saat card baru dibuat
+    const unnotifiedNewCards = newCards.filter((c) => !notifiedNewCardIds.has(c.id));
+    if (unnotifiedNewCards.length > 0) {
+      unnotifiedNewCards.forEach((c) => notifiedNewCardIds.add(c.id));
+      const firstCard = unnotifiedNewCards[0];
+      const title = `📥 RESEP BARU MASUK (${unnotifiedNewCards.length} Resep New)`;
+      const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
+      sendDesktopNotification(title, body, 'new', { activeNotif: null });
+    }
+
+    // b. NOTIFIKASI PENDING: Pengingat berkala sampai web dibuka
     if (pendingCards.length === 0) {
       pendingNotifState.nextFireAt = 0;
       if (pendingNotifState.activeNotif) {
         pendingNotifState.activeNotif.close();
         pendingNotifState.activeNotif = null;
       }
-    } else if (now >= pendingNotifState.nextFireAt) {
-      const firstCard = pendingCards[0];
-      const title = `⚠️ PENDING - ${pendingCards.length} Resep Menunggu!`;
-      const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
+    } else {
+      if (pendingNotifState.nextFireAt === 0) {
+        // Jeda awal saat baru ada card pending
+        pendingNotifState.nextFireAt = now + NOTIF_PENDING_INITIAL_DELAY_MS;
+      } else if (now >= pendingNotifState.nextFireAt) {
+        const firstCard = pendingCards[0];
+        const title = `⚠️ PENDING - ${pendingCards.length} Resep Menunggu!`;
+        const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
 
-      sendDesktopNotification(title, body, 'pending', pendingNotifState);
-      pendingNotifState.nextFireAt = now + 10 * 1000; // Putar ulang setiap 10 detik
+        sendDesktopNotification(title, body, 'pending', pendingNotifState);
+        pendingNotifState.nextFireAt = now + NOTIF_PENDING_INTERVAL_MS; // Putar ulang
+      }
     }
 
-    // b. NOTIFIKASI ON PROGRESS: Setiap 20 detik sekali sampai user kembali ke web
+    // c. NOTIFIKASI ON PROGRESS: Pengingat berkala sampai user kembali ke web
     if (progressCards.length === 0) {
       progressNotifState.nextFireAt = 0;
       if (progressNotifState.activeNotif) {
@@ -550,7 +593,7 @@ function checkStaffNotifications() {
       const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
 
       sendDesktopNotification(title, body, 'onprogress', progressNotifState);
-      progressNotifState.nextFireAt = now + 20 * 1000; // Putar ulang setiap 20 detik
+      progressNotifState.nextFireAt = now + NOTIF_PROGRESS_INTERVAL_MS; // Putar ulang
     }
   }
 }
@@ -812,6 +855,8 @@ function updateCardStatus(cardId, newStatus) {
 
   if (newStatus === 'pending') {
     card.pendingAt = now;
+    // Beri jeda setelah card dipindahkan ke pending sebelum notifikasi pending berbunyi
+    pendingNotifState.nextFireAt = Math.max(pendingNotifState.nextFireAt, now + NOTIF_PENDING_INITIAL_DELAY_MS);
   } else if (newStatus === 'onprogress') {
     // Ketika dipindah ke On Progress, timer reset mulai dari 00:00
     card.progressAt = now;

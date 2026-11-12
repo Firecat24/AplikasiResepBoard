@@ -927,6 +927,11 @@ body {
   animation: toastSlideIn 0.25s ease-out;
 }
 
+.staff-toast.toast-new {
+  background: #2563eb;
+  border-left: 6px solid #bfdbfe;
+}
+
 .staff-toast.toast-pending {
   background: #d97706;
   border-left: 6px solid #fef08a;
