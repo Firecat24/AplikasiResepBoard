@@ -55,6 +55,11 @@
       </div>
 
       <div class="topbar-right">
+        <!-- Tombol Izin Notifikasi Desktop (Khusus Staff Apotek) -->
+        <button id="btn-enable-notif" class="btn btn-notif hidden">
+          🔔 Aktifkan Notif Desktop
+        </button>
+
         <!-- Tombol Lihat History -->
         <button id="btn-open-history" class="btn btn-history">
           📜 History (<span id="count-history">0</span>)
@@ -254,6 +259,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Container Toast Notifikasi Layar Staff -->
+  <div id="staff-toast-container" class="staff-toast-container"></div>
 
   <script src="load_js.php?v=1"></script>
 </body>

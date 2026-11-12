@@ -46,6 +46,16 @@ const selectedCountSpan = document.getElementById('selected-count');
 const deleteModeBanner = document.getElementById('delete-mode-banner');
 const rolePermissionHint = document.getElementById('role-permission-hint');
 const btnLogout = document.getElementById('btn-logout');
+const btnEnableNotif = document.getElementById('btn-enable-notif');
+const staffToastContainer = document.getElementById('staff-toast-container');
+
+// State Notifikasi Khusus Staff Apotek & Dokter
+// - Staff: Pending (10s), On Progress (20s)
+// - Dokter: Done (20s)
+const pendingNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
+const progressNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
+const doneNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
+let audioCtx = null;
 
 // Elemen History
 const btnOpenHistory = document.getElementById('btn-open-history');
@@ -103,23 +113,29 @@ function initApp() {
   // Coba ambil data dari Database MySQL cPanel (api.php) jika sudah di-hosting
   fetchCardsFromServer();
 
-  // Jalankan pengecekan setiap 1 detik untuk aturan > 2 menit otomatis ke Pending & update timer
+  // Jalankan pengecekan setiap 1 detik untuk aturan > 2 menit otomatis ke Pending, update timer, & notifikasi Staff
   setInterval(() => {
     checkAutoPending();
     updateLiveTimers();
+    checkStaffNotifications();
   }, 1000);
 
-  // Polling sinkronisasi otomatis ke database cPanel (hanya saat user sudah login & tab sedang aktif/terlihat)
+  // Polling sinkronisasi otomatis ke database cPanel
+  // (Tetap berjalan saat tab di-minimize agar notifikasi desktop Dokter & Apotek tetap terpantau)
   setInterval(() => {
-    if (useServerDB && currentUser && !document.hidden && !draggedCardId && !isDeleteMode) {
+    if (useServerDB && currentUser && !draggedCardId && !isDeleteMode) {
       fetchCardsFromServer();
     }
   }, 3000);
 
-  // Langsung sinkronkan saat tab kembali dibuka/dilihat
+  // Saat user kembali membuka/fokus ke tab web, reset status notifikasi & hentikan bunyi pengingat
+  window.addEventListener('focus', onUserReturnToPage);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && useServerDB && currentUser) {
-      fetchCardsFromServer();
+    if (!document.hidden) {
+      onUserReturnToPage();
+      if (useServerDB && currentUser) {
+        fetchCardsFromServer();
+      }
     }
   });
 
@@ -291,15 +307,16 @@ function showBoardPage() {
   }
 
   // Wewenang Tombol Berdasarkan Role (Dokter vs Staff Apotek)
+  initNotificationPermission();
   if (currentUser.role === 'dokter') {
     dokterActions.classList.remove('hidden');
     rolePermissionHint.innerHTML =
-      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit &amp; Hapus (khusus di New &amp; Pending)</em>, serta memindahkan <em>New &rarr; Pending</em>.';
+      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit &amp; Hapus (khusus di New &amp; Pending)</em>, serta memindahkan <em>New &rarr; Pending</em> &amp; <em>Done &rarr; History</em> (Notifikasi berbunyi tiap 20 dtk jika ada resep di Done).';
   } else {
     dokterActions.classList.add('hidden');
     exitDeleteMode();
     rolePermissionHint.innerHTML =
-      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>On Progress &rarr; Done &rarr; History</em> (Tidak bisa paksa New ke Pending).';
+      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>On Progress &rarr; Done &rarr; History</em> (Notifikasi otomatis berbunyi tiap 10 dtk di Pending &amp; 20 dtk di On Progress sampai Anda membuka web).';
   }
 
   checkAutoPending();
@@ -325,6 +342,216 @@ function checkAutoPending() {
   if (hasChanged) {
     saveCardsToStorage();
     renderBoard();
+  }
+}
+
+// =========================================================================
+// 6B. SISTEM NOTIFIKASI DESKTOP (STAFF APOTEK & DOKTER)
+//     - Staff Apotek : Pending (tiap 10s), On Progress (tiap 20s)
+//     - Dokter       : Done (tiap 20s jika ada obat siap ambil)
+// =========================================================================
+function initNotificationPermission() {
+  if (!('Notification' in window) || !btnEnableNotif) return;
+  btnEnableNotif.classList.remove('hidden');
+  updateNotifButtonUI();
+
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().then(() => {
+      updateNotifButtonUI();
+    });
+  }
+}
+
+function updateNotifButtonUI() {
+  if (!btnEnableNotif || !('Notification' in window)) return;
+  if (Notification.permission === 'granted') {
+    btnEnableNotif.textContent = '🔔 Notif Desktop Aktif';
+    btnEnableNotif.classList.add('notif-granted');
+  } else if (Notification.permission === 'denied') {
+    btnEnableNotif.textContent = '🔕 Notif Desktop Diblokir Browser';
+    btnEnableNotif.classList.remove('notif-granted');
+  } else {
+    btnEnableNotif.textContent = '🔔 Aktifkan Notif Desktop';
+    btnEnableNotif.classList.remove('notif-granted');
+  }
+}
+
+function onUserReturnToPage() {
+  // Ketika user kembali melihat/membuka tab web ini
+  pendingNotifState.dismissedByClick = false;
+  progressNotifState.dismissedByClick = false;
+  doneNotifState.dismissedByClick = false;
+  pendingNotifState.nextFireAt = Date.now() + 10 * 1000;
+  progressNotifState.nextFireAt = Date.now() + 20 * 1000;
+  doneNotifState.nextFireAt = Date.now() + 20 * 1000;
+
+  if (pendingNotifState.activeNotif) {
+    pendingNotifState.activeNotif.close();
+    pendingNotifState.activeNotif = null;
+  }
+  if (progressNotifState.activeNotif) {
+    progressNotifState.activeNotif.close();
+    progressNotifState.activeNotif = null;
+  }
+  if (doneNotifState.activeNotif) {
+    doneNotifState.activeNotif.close();
+    doneNotifState.activeNotif = null;
+  }
+}
+
+function playNotifBeep(type) {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    if (!audioCtx) audioCtx = new AudioContextClass();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    // Nada Pending (880Hz), On Progress (660Hz), Done (1046Hz nada tinggi selesai)
+    const freq = type === 'pending' ? 880 : (type === 'done' ? 1046 : 660);
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.25);
+  } catch (e) {
+    // Abaikan jika browser memblokir audio sebelum interaksi
+  }
+}
+
+function showToastMessage(title, body, type) {
+  if (!staffToastContainer) return;
+  const toast = document.createElement('div');
+  const cls = type === 'pending' ? 'toast-pending' : (type === 'done' ? 'toast-done' : 'toast-progress');
+  toast.className = `staff-toast ${cls}`;
+  toast.textContent = `${title} — ${body}`;
+  staffToastContainer.appendChild(toast);
+
+  setTimeout(() => {
+    if (toast.parentNode) toast.parentNode.removeChild(toast);
+  }, 2500);
+}
+
+function sendDesktopNotification(title, body, type, stateObj) {
+  playNotifBeep(type);
+  showToastMessage(title, body, type);
+
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      if (stateObj.activeNotif) {
+        stateObj.activeNotif.close();
+      }
+      const n = new Notification(title, {
+        body: body,
+        tag: `resepboard-${type}-${Date.now()}`,
+        requireInteraction: false
+      });
+
+      // Deteksi ketika user mengklik notif atau tombol silang (X)
+      n.onclick = () => {
+        window.focus();
+        onUserReturnToPage();
+        n.close();
+      };
+      n.onclose = () => {
+        // User menekan X atau notif ditutup
+        stateObj.activeNotif = null;
+      };
+
+      stateObj.activeNotif = n;
+    } catch (e) {
+      // Abaikan jika browser error
+    }
+  }
+}
+
+function checkStaffNotifications() {
+  if (!currentUser) return;
+
+  // Jika halaman web sedang dibuka aktif di layar (tidak di-minimize/tertutup tab lain),
+  // user sudah melihat board secara langsung, jadi tidak perlu memicu spam notifikasi desktop
+  if (!document.hidden && document.hasFocus && document.hasFocus()) {
+    pendingNotifState.nextFireAt = Date.now() + 10 * 1000;
+    progressNotifState.nextFireAt = Date.now() + 20 * 1000;
+    doneNotifState.nextFireAt = Date.now() + 20 * 1000;
+    return;
+  }
+
+  const now = Date.now();
+
+  // ==========================================
+  // 1) NOTIFIKASI UNTUK DOKTER: FASE DONE (20 DETIK SEKALI)
+  // ==========================================
+  if (currentUser.role === 'dokter') {
+    // Ambil resep di Done yang dokternya cocok dengan dokter yang login (atau semua jika cocok)
+    const doneCards = cards.filter((c) => {
+      if (c.status !== 'done') return false;
+      const docName = (c.dokter || '').toLowerCase();
+      const currName = (currentUser.nama || '').toLowerCase();
+      const currUser = (currentUser.username || '').toLowerCase();
+      return docName.includes(currUser) || docName.includes(currName) || currName.includes(docName);
+    });
+
+    if (doneCards.length === 0) {
+      doneNotifState.nextFireAt = 0;
+      if (doneNotifState.activeNotif) {
+        doneNotifState.activeNotif.close();
+        doneNotifState.activeNotif = null;
+      }
+    } else if (now >= doneNotifState.nextFireAt) {
+      const firstCard = doneCards[0];
+      const title = `✅ OBAT SELESAI (${doneCards.length} Resep Siap Ambil)`;
+      const body = `Pasien boleh turun ke Lt. 1: ${firstCard.resep.slice(0, 70)}`;
+
+      sendDesktopNotification(title, body, 'done', doneNotifState);
+      doneNotifState.nextFireAt = now + 20 * 1000; // Putar ulang setiap 20 detik sampai dibuka
+    }
+    return;
+  }
+
+  // ==========================================
+  // 2) NOTIFIKASI UNTUK STAFF APOTEK: PENDING (10s) & ON PROGRESS (20s)
+  // ==========================================
+  if (currentUser.role === 'apotek') {
+    const pendingCards = cards.filter((c) => c.status === 'pending');
+    const progressCards = cards.filter((c) => c.status === 'onprogress');
+
+    // a. NOTIFIKASI PENDING: Setiap 10 detik sekali sampai user kembali ke web
+    if (pendingCards.length === 0) {
+      pendingNotifState.nextFireAt = 0;
+      if (pendingNotifState.activeNotif) {
+        pendingNotifState.activeNotif.close();
+        pendingNotifState.activeNotif = null;
+      }
+    } else if (now >= pendingNotifState.nextFireAt) {
+      const firstCard = pendingCards[0];
+      const title = `⚠️ PENDING - ${pendingCards.length} Resep Menunggu!`;
+      const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
+
+      sendDesktopNotification(title, body, 'pending', pendingNotifState);
+      pendingNotifState.nextFireAt = now + 10 * 1000; // Putar ulang setiap 10 detik
+    }
+
+    // b. NOTIFIKASI ON PROGRESS: Setiap 20 detik sekali sampai user kembali ke web
+    if (progressCards.length === 0) {
+      progressNotifState.nextFireAt = 0;
+      if (progressNotifState.activeNotif) {
+        progressNotifState.activeNotif.close();
+        progressNotifState.activeNotif = null;
+      }
+    } else if (now >= progressNotifState.nextFireAt) {
+      const firstCard = progressCards[0];
+      const title = `⚗️ ON PROGRESS - ${progressCards.length} Resep Sedang Diracik`;
+      const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
+
+      sendDesktopNotification(title, body, 'onprogress', progressNotifState);
+      progressNotifState.nextFireAt = now + 20 * 1000; // Putar ulang setiap 20 detik
+    }
   }
 }
 
@@ -1024,6 +1251,16 @@ function setupDragAndDrop() {
 function setupEventListeners() {
   loginForm.addEventListener('submit', handleLogin);
   btnLogout.addEventListener('click', handleLogout);
+
+  if (btnEnableNotif) {
+    btnEnableNotif.addEventListener('click', () => {
+      if ('Notification' in window) {
+        Notification.requestPermission().then(() => {
+          updateNotifButtonUI();
+        });
+      }
+    });
+  }
 
   if (btnTogglePassword) {
     btnTogglePassword.addEventListener('click', () => {
