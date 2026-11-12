@@ -7,7 +7,9 @@
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
   <title>Resep Board</title>
-  <link rel="stylesheet" href="style.css?v=1" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="shortcut icon" href="favicon.ico" />
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
 
@@ -15,7 +17,9 @@
   <section id="login-page" class="login-wrapper">
     <div class="login-card">
       <div class="login-header">
-        <div class="logo-icon">💊</div>
+        <div class="logo-icon">
+          <img src="logo_dmu.png" alt="Logo DMU" class="login-logo-img" />
+        </div>
         <h1>ResepBoard</h1>
         <p>Sistem Pantau Resep Dokter &amp; Apotek</p>
       </div>
@@ -50,7 +54,10 @@
     <!-- Top Header / Profil -->
     <header class="topbar">
       <div class="topbar-left">
-        <span class="brand-logo">💊 ResepBoard</span>
+        <span class="brand-logo">
+          <img src="logo_dmu.png" alt="Logo DMU" class="brand-logo-img" />
+          <span>ResepBoard</span>
+        </span>
         <span class="brand-subtitle">Status Resep Dokter &amp; Apotek Lt. 1</span>
       </div>
 
@@ -62,7 +69,7 @@
 
         <!-- Tombol Lihat History -->
         <button id="btn-open-history" class="btn btn-history">
-          📜 History (<span id="count-history">0</span>)
+          📜 History
         </button>
 
         <!-- Grup Aksi Khusus Dokter: Hapus Card (Kiri) & Tambah Card (Kanan) -->

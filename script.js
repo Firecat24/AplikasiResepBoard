@@ -17,6 +17,9 @@ const NOTIF_PROGRESS_INTERVAL_MS = 20 * 1000;
 // Interval pengingat berkala untuk Dokter di kolom Done / Obat Selesai (Default: 20 detik)
 const NOTIF_DONE_INTERVAL_MS = 20 * 1000;
 
+// Interval pengingat berkala saat ada perubahan di kolom Diskusi (Default: 20 detik)
+const NOTIF_DISKUSI_INTERVAL_MS = 20 * 1000;
+
 // Jeda sebelum notifikasi berulang kembali setelah user membuka/melihat tab web (Default: 20 detik)
 const NOTIF_RETURN_PAGE_DELAY_MS = 20 * 1000;
 
@@ -67,10 +70,12 @@ const staffToastContainer = document.getElementById('staff-toast-container');
 // State Notifikasi Khusus Staff Apotek & Dokter
 // - Staff : New (1x saja per card baru), Pending (tiap 20s, jeda awal 20s setelah dipindah), On Progress (tiap 20s)
 // - Dokter: Done (tiap 20s)
+// - Diskusi (Staff & Dokter): Perubahan foto, catatan, atau resep (tiap 20s sampai web dibuka kembali)
 const notifiedNewCardIds = new Set();
 const pendingNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
 const progressNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
 const doneNotifState = { nextFireAt: 0, activeNotif: null, dismissedByClick: false };
+const diskusiNotifState = { nextFireAt: 0, activeNotif: null, hasUnread: false, title: '', body: '' };
 let audioCtx = null;
 
 // Elemen History
@@ -340,7 +345,7 @@ function initApp() {
 }
 
 // =========================================================================
-// 4. MANAJEMEN STORAGE (LOCALSTORAGE + DATABASE MYSQL CPANEL)
+// 4. MANAJEMEN STORAGE & DETEKSI PERUBAHAN DISKUSI
 // =========================================================================
 // Penanda perubahan lokal yang belum dikonfirmasi server (agar tidak ditimpa polling)
 let pendingSyncCount = 0;
@@ -349,6 +354,108 @@ const LOCAL_CHANGE_GRACE_MS = 5000;
 
 // Draft ketikan catatan staff per card (agar tidak hilang saat board di-render ulang)
 const ketDrafts = {};
+
+// Sistem pelacakan snapshot kartu di kolom Diskusi
+let diskusiBaselineReady = false;
+const previousDiskusiCardsMap = new Map();
+
+function getDiskusiCardSignature(card) {
+  const foto = card.foto || '';
+  const fotoSig = foto ? `${foto.length}:${foto.slice(0, 30)}:${foto.slice(-30)}` : '';
+  return {
+    id: card.id,
+    pasien: (card.pasien || '').trim(),
+    dokter: (card.dokter || '').trim(),
+    resep: (card.resep || '').trim(),
+    keteranganFoto: (card.keteranganFoto || '').trim(),
+    fotoSig: fotoSig
+  };
+}
+
+function notifyDiskusiChange(title, body) {
+  diskusiNotifState.title = title;
+  diskusiNotifState.body = body;
+  diskusiNotifState.hasUnread = true;
+  diskusiNotifState.nextFireAt = Date.now() + NOTIF_DISKUSI_INTERVAL_MS;
+
+  sendDesktopNotification(title, body, 'diskusi', diskusiNotifState);
+}
+
+function checkForDiskusiChanges(newCards) {
+  if (!Array.isArray(newCards)) return;
+
+  const currentDiskusiCards = newCards.filter((c) => c.status === 'diskusi');
+
+  // Baseline inisial saat awal load (agar tidak memicu alarm untuk resep yang sudah ada)
+  if (!diskusiBaselineReady) {
+    previousDiskusiCardsMap.clear();
+    currentDiskusiCards.forEach((c) => {
+      previousDiskusiCardsMap.set(c.id, getDiskusiCardSignature(c));
+    });
+    diskusiBaselineReady = true;
+    return;
+  }
+
+  let changeDetected = false;
+  let notifTitle = '';
+  let notifBody = '';
+
+  const isRecentLocalChange = Date.now() - lastLocalChangeAt < LOCAL_CHANGE_GRACE_MS;
+
+  currentDiskusiCards.forEach((c) => {
+    const currSig = getDiskusiCardSignature(c);
+    const prevSig = previousDiskusiCardsMap.get(c.id);
+
+    if (prevSig) {
+      const fotoChanged = currSig.fotoSig !== prevSig.fotoSig;
+      const ketChanged = currSig.keteranganFoto !== prevSig.keteranganFoto;
+      const pasienChanged = currSig.pasien !== prevSig.pasien;
+      const dokterChanged = currSig.dokter !== prevSig.dokter;
+      const resepChanged = currSig.resep !== prevSig.resep;
+
+      if (fotoChanged || ketChanged || pasienChanged || dokterChanged || resepChanged) {
+        changeDetected = true;
+        const namaTarget = currSig.pasien ? `Pasien ${currSig.pasien}` : `Resep ${currSig.dokter}`;
+
+        if (fotoChanged && ketChanged) {
+          notifTitle = `💬 DISKUSI: ${namaTarget}`;
+          notifBody = `Staff memperbarui foto & catatan nominal obat.`;
+        } else if (fotoChanged) {
+          notifTitle = `📸 FOTO DISKUSI: ${namaTarget}`;
+          notifBody = currSig.fotoSig ? `Staff mengunggah foto screenshot baru.` : `Staff menghapus foto screenshot.`;
+        } else if (ketChanged) {
+          notifTitle = `💬 CATATAN STAFF: ${namaTarget}`;
+          notifBody = currSig.keteranganFoto ? `Catatan: "${currSig.keteranganFoto.slice(0, 45)}"` : `Catatan staff diperbarui.`;
+        } else if (pasienChanged || dokterChanged || resepChanged) {
+          notifTitle = `👨‍⚕️ RESEP DIEDIT: ${namaTarget}`;
+          notifBody = `Dokter mengubah detail resep: ${currSig.resep.slice(0, 45)}`;
+        }
+      }
+    } else {
+      // Resep baru saja masuk ke fase Diskusi
+      changeDetected = true;
+      const namaTarget = currSig.pasien ? `Pasien ${currSig.pasien}` : `Resep ${currSig.dokter}`;
+      notifTitle = `💬 MASUK DISKUSI: ${namaTarget}`;
+      notifBody = `Resep dibuka untuk diskusi obat / screenshot nominal.`;
+    }
+
+    // Perbarui signature tersimpan
+    previousDiskusiCardsMap.set(c.id, currSig);
+  });
+
+  // Hapus card yang sudah keluar dari fase diskusi
+  const activeDiskusiIds = new Set(currentDiskusiCards.map((c) => c.id));
+  for (const savedId of previousDiskusiCardsMap.keys()) {
+    if (!activeDiskusiIds.has(savedId)) {
+      previousDiskusiCardsMap.delete(savedId);
+    }
+  }
+
+  // Notifikasi langsung dipicu jika ada perubahan nyata dan bukan aksi dari tab sendiri
+  if (changeDetected && !isRecentLocalChange) {
+    notifyDiskusiChange(notifTitle, notifBody);
+  }
+}
 
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
@@ -360,6 +467,9 @@ async function fetchCardsFromServer() {
     const data = await res.json();
     if (data && data.ok && Array.isArray(data.cards)) {
       useServerDB = true;
+
+      // Pantau adanya perubahan baru pada fase Diskusi
+      checkForDiskusiChanges(data.cards);
 
       // Jangan timpa data lokal jika user sedang mengetik,
       // masih ada simpanan yang sedang dikirim, atau baru saja ada perubahan lokal
@@ -388,6 +498,9 @@ async function fetchCardsFromServer() {
 
 async function syncUpsertCardToServer(card) {
   lastLocalChangeAt = Date.now();
+  if (card && card.status === 'diskusi') {
+    previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+  }
   if (!useServerDB) return true;
   pendingSyncCount++;
   try {
@@ -443,6 +556,7 @@ function loadCardsFromStorage() {
   } else {
     cards = [];
   }
+  checkForDiskusiChanges(cards);
 }
 
 function saveCardsToStorage() {
@@ -616,6 +730,14 @@ function onUserReturnToPage() {
   progressNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
   doneNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
 
+  // Hentikan/hilangkan notifikasi pengingat diskusi saat tab web dibuka kembali
+  diskusiNotifState.hasUnread = false;
+  diskusiNotifState.nextFireAt = 0;
+  if (diskusiNotifState.activeNotif) {
+    diskusiNotifState.activeNotif.close();
+    diskusiNotifState.activeNotif = null;
+  }
+
   if (pendingNotifState.activeNotif) {
     pendingNotifState.activeNotif.close();
     pendingNotifState.activeNotif = null;
@@ -640,10 +762,11 @@ function playNotifBeep(type) {
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.type = 'sine';
-    // Nada New (520Hz lembut), Pending (880Hz), On Progress (660Hz), Done (1046Hz nada tinggi selesai)
+    // Nada New (520Hz lembut), Pending (880Hz), Diskusi (740Hz), On Progress (660Hz), Done (1046Hz nada tinggi selesai)
     let freq = 660;
     if (type === 'new') freq = 520;
     else if (type === 'pending') freq = 880;
+    else if (type === 'diskusi') freq = 740;
     else if (type === 'done') freq = 1046;
 
     osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
@@ -665,6 +788,7 @@ function showToastMessage(title, body, type) {
   let cls = 'toast-progress';
   if (type === 'new') cls = 'toast-new';
   else if (type === 'pending') cls = 'toast-pending';
+  else if (type === 'diskusi') cls = 'toast-diskusi';
   else if (type === 'done') cls = 'toast-done';
 
   toast.className = `staff-toast ${cls}`;
@@ -687,6 +811,7 @@ function sendDesktopNotification(title, body, type, stateObj) {
       }
       const n = new Notification(title, {
         body: body,
+        icon: 'logo_dmu.png',
         tag: `resepboard-${type}-${Date.now()}`,
         requireInteraction: false
       });
@@ -718,10 +843,34 @@ function checkStaffNotifications() {
     pendingNotifState.nextFireAt = Date.now() + NOTIF_PENDING_INTERVAL_MS;
     progressNotifState.nextFireAt = Date.now() + NOTIF_PROGRESS_INTERVAL_MS;
     doneNotifState.nextFireAt = Date.now() + NOTIF_DONE_INTERVAL_MS;
+    diskusiNotifState.nextFireAt = Date.now() + NOTIF_DISKUSI_INTERVAL_MS;
+    diskusiNotifState.hasUnread = false; // Web sedang dibuka langsung
     return;
   }
 
   const now = Date.now();
+
+  // ==========================================
+  // 1) NOTIFIKASI BERULANG UNTUK DISKUSI (SETIAP 20 DETIK SAMPAI WEB DIBUKA KEMBALI)
+  // Berlaku untuk Dokter & Staff ketika ada perubahan diskusi yang belum dilihat
+  // ==========================================
+  const diskusiCards = cards.filter((c) => c.status === 'diskusi');
+  if (diskusiCards.length === 0) {
+    diskusiNotifState.hasUnread = false;
+    diskusiNotifState.nextFireAt = 0;
+    if (diskusiNotifState.activeNotif) {
+      diskusiNotifState.activeNotif.close();
+      diskusiNotifState.activeNotif = null;
+    }
+  } else if (diskusiNotifState.hasUnread && now >= diskusiNotifState.nextFireAt) {
+    sendDesktopNotification(
+      diskusiNotifState.title || '💬 DISKUSI DIPERBARUI',
+      diskusiNotifState.body || 'Ada perubahan foto, catatan staff, atau resep di fase diskusi.',
+      'diskusi',
+      diskusiNotifState
+    );
+    diskusiNotifState.nextFireAt = now + NOTIF_DISKUSI_INTERVAL_MS;
+  }
 
   // ==========================================
   // 1) NOTIFIKASI UNTUK DOKTER: FASE DONE (20 DETIK SEKALI)
@@ -1104,8 +1253,9 @@ function updateCardStatus(cardId, newStatus) {
   } else if (newStatus === 'diskusi') {
     card.diskusiAt = now;
   } else if (newStatus === 'onprogress') {
-    // Ketika dipindah ke On Progress, timer reset mulai dari 00:00
+    // Ketika dipindah ke On Progress, timer reset mulai dari 00:00 & foto diskusi langsung dibersihkan
     card.progressAt = now;
+    card.foto = null;
   } else if (newStatus === 'done') {
     card.doneAt = now;
     // Bersihkan foto saat masuk ke Done agar kuota database hosting tetap ringan & tidak menumpuk
@@ -1525,7 +1675,7 @@ function createCardElement(card) {
       const btnToProgress = document.createElement('button');
       btnToProgress.type = 'button';
       btnToProgress.className = 'btn-quick-action btn-to-progress';
-      btnToProgress.textContent = '⚡ Selesai Diskusi -> On Progress';
+      btnToProgress.textContent = '⚡ Selesai Diskusi > On Progress';
       btnToProgress.addEventListener('click', () =>
         updateCardStatus(card.id, 'onprogress')
       );
