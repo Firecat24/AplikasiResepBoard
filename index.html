@@ -313,16 +313,6 @@
   <!-- Container Toast Notifikasi Layar Staff -->
   <div id="staff-toast-container" class="staff-toast-container"></div>
 
-  <!-- Smart Script Loader: Mendukung Integrated Browser / Localhost statis sekaligus Server Produksi cPanel -->
-  <script>
-    (function() {
-      var isLocalDev = window.location.protocol === 'file:' || 
-                       window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1';
-      var script = document.createElement('script');
-      script.src = isLocalDev ? 'script.js?v=2' : 'load_js.php?v=2';
-      document.body.appendChild(script);
-    })();
-  </script>
+  <script src="script.js?v=1"></script>
 </body>
 </html>

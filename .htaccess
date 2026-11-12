@@ -1,8 +1,8 @@
 # 1. Matikan Directory Listing
 Options -Indexes
 
-# 2. Blokir 403 Forbidden untuk akses langsung ke config.php, script.js, .htaccess, dll.
-<FilesMatch "^(\.htaccess|config\.php|script\.js|akun_login\.txt|.*\.pdf)$">
+# 2. Blokir 403 Forbidden untuk akses langsung ke config.php, akun_login.txt, database.sql, dll.
+<FilesMatch "^(\.htaccess|config\.php|akun_login\.txt|database\.sql|.*\.pdf)$">
   Require all denied
 </FilesMatch>
 
