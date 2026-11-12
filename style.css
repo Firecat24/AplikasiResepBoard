@@ -423,18 +423,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 72vh;
-  border: 2px solid transparent;
-  transition: border-color 0.2s, background-color 0.2s;
-}
-
-.board-column.drag-over {
-  border-color: #2563eb;
-  background-color: #dbeafe;
-}
-
-.board-column.drag-blocked {
-  border-color: #ef4444;
-  background-color: #fee2e2;
+  border: 1px solid #cbd5e1;
 }
 
 .column-header {
@@ -515,19 +504,6 @@ body {
   background: #ffffff;
   position: relative;
   cursor: default;
-}
-
-.resep-card.draggable-card {
-  cursor: grab;
-}
-
-.resep-card.draggable-card:active {
-  cursor: grabbing;
-}
-
-.resep-card.dragging {
-  opacity: 0.5;
-  transform: scale(0.98);
 }
 
 /* Mode Pilih Hapus Card */
@@ -688,28 +664,58 @@ body {
 }
 
 .diskusi-paste-zone {
-  border: 2px dashed #cbd5e1;
-  background: #ffffff;
-  border-radius: 6px;
-  padding: 12px 10px;
+  border: 2px dashed #0891b2;
+  background: #f0fdfa;
+  border-radius: 8px;
+  padding: 14px 10px;
   text-align: center;
-  font-size: 0.78rem;
-  color: #64748b;
+  font-size: 0.8rem;
+  color: #0f766e;
   cursor: pointer;
   transition: all 0.2s;
   outline: none;
+  user-select: none;
 }
 
 .diskusi-paste-zone:hover,
-.diskusi-paste-zone:focus {
-  border-color: #0891b2;
-  background: #ecfeff;
+.diskusi-paste-zone:focus,
+.diskusi-paste-zone.is-active-paste {
+  border-color: #0284c7;
+  background: #e0f2fe;
+  color: #0369a1;
+  box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.25);
+}
+
+.diskusi-file-btn-wrap {
+  text-align: center;
+  margin-top: 2px;
+}
+
+.btn-file-select {
+  background: transparent;
+  border: none;
+  color: #0891b2;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 6px;
+}
+
+.btn-file-select:hover {
   color: #0e7490;
 }
 
-.diskusi-paste-zone.has-paste-focus {
-  border-color: #0891b2;
-  box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.18);
+.badge-foto-sukses {
+  display: inline-block;
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #86efac;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
 }
 
 .diskusi-preview-wrap {

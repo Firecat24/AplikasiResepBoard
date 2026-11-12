@@ -10,6 +10,7 @@ CREATE TABLE `resep_cards` (
   `pasien` VARCHAR(150) NOT NULL DEFAULT '',
   `dokter` VARCHAR(150) NOT NULL DEFAULT '',
   `resep` TEXT NOT NULL,
+  `foto` MEDIUMTEXT NULL,
   `keterangan_foto` TEXT NULL,
   `warna` VARCHAR(20) NOT NULL DEFAULT 'yellow',
   `status` ENUM('new', 'pending', 'diskusi', 'onprogress', 'done', 'history') NOT NULL DEFAULT 'new',
@@ -28,6 +29,7 @@ CREATE TABLE `resep_cards` (
 -- =========================================================================
 -- ALTER TABLE `resep_cards`
 --   ADD COLUMN `pasien` VARCHAR(150) NOT NULL DEFAULT '' AFTER `id`,
---   ADD COLUMN `keterangan_foto` TEXT NULL AFTER `resep`,
+--   ADD COLUMN `foto` MEDIUMTEXT NULL AFTER `resep`,
+--   ADD COLUMN `keterangan_foto` TEXT NULL AFTER `foto`,
 --   ADD COLUMN `diskusi_at` BIGINT NULL DEFAULT NULL AFTER `pending_at`,
 --   MODIFY COLUMN `status` ENUM('new', 'pending', 'diskusi', 'onprogress', 'done', 'history') NOT NULL DEFAULT 'new';

@@ -129,6 +129,7 @@ if ($method === 'GET') {
             'pasien' => $r['pasien'] ?? '',
             'dokter' => $r['dokter'],
             'resep' => $r['resep'],
+            'foto' => $r['foto'] ?? null,
             'keteranganFoto' => $r['keterangan_foto'] ?? '',
             'warna' => $r['warna'],
             'status' => $r['status'],
@@ -160,13 +161,14 @@ if ($method === 'POST') {
         $c = $input['card'];
         $stmt = $pdo->prepare("
             INSERT INTO `resep_cards`
-              (`id`, `pasien`, `dokter`, `resep`, `keterangan_foto`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
+              (`id`, `pasien`, `dokter`, `resep`, `foto`, `keterangan_foto`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
             VALUES
-              (:id, :pasien, :dokter, :resep, :keterangan_foto, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
+              (:id, :pasien, :dokter, :resep, :foto, :keterangan_foto, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
             ON DUPLICATE KEY UPDATE
               `pasien` = VALUES(`pasien`),
               `dokter` = VALUES(`dokter`),
               `resep` = VALUES(`resep`),
+              `foto` = VALUES(`foto`),
               `keterangan_foto` = VALUES(`keterangan_foto`),
               `warna` = VALUES(`warna`),
               `status` = VALUES(`status`),
@@ -182,6 +184,7 @@ if ($method === 'POST') {
             ':pasien' => trim($c['pasien'] ?? ''),
             ':dokter' => $c['dokter'],
             ':resep' => $c['resep'],
+            ':foto' => !empty($c['foto']) ? $c['foto'] : null,
             ':keterangan_foto' => isset($c['keteranganFoto']) ? trim($c['keteranganFoto']) : null,
             ':warna' => $c['warna'] ?? 'yellow',
             ':status' => $c['status'] ?? 'new',

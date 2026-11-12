@@ -30,7 +30,6 @@ const API_URL = 'api.php'; // Endpoint untuk autentikasi & koneksi Database MySQ
 // =========================================================================
 let currentUser = null;
 let cards = [];
-let draggedCardId = null;
 let useServerDB = false; // Otomatis true ketika sudah di-deploy di cPanel & api.php aktif
 
 // State untuk Mode Pilih & Hapus Card (Khusus Dokter di fase New & Pending)
@@ -120,23 +119,54 @@ const counts = {
   done: document.getElementById('count-done')
 };
 
+// Variable untuk mengingat card yang sedang aktif / diklik paste zone-nya
+let activePasteCardId = null;
+
 // =========================================================================
-// HELPER EPHEMERAL SCREENSHOT (HANYA DI SESI BROWSER, TIDAK DISIMPAN KE DB)
+// HELPER KOMPRESI & PENGIRIMAN FOTO SCREENSHOT (RINGAN & HEMAT KUOTA)
 // =========================================================================
-function getCardScreenshot(cardId) {
-  return sessionStorage.getItem('resep_screen_' + cardId) || null;
+function compressImage(fileOrBlob, maxWidth = 900, quality = 0.65) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        // Konversi ke format JPEG terkompresi (~30-50KB) agar kilat dikirim ke Dokter & hemat storage
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(fileOrBlob);
+  });
 }
 
-function setCardScreenshot(cardId, dataUrl) {
+async function handleIncomingImage(card, fileOrBlob) {
+  if (!card || !fileOrBlob) return;
   try {
-    sessionStorage.setItem('resep_screen_' + cardId, dataUrl);
-  } catch (e) {
-    console.warn('SessionStorage tidak cukup untuk foto screenshot:', e);
+    showToastMessage('📸 Memproses Foto...', 'Sedang mengompres & mengirim ke Dokter...', 'pending');
+    const compressedDataUrl = await compressImage(fileOrBlob);
+    card.foto = compressedDataUrl;
+    syncUpsertCardToServer(card);
+    saveCardsToStorage();
+    renderBoard();
+    showToastMessage('✅ Berhasil!', 'Foto screenshot berhasil dikirim ke Dokter.', 'done');
+  } catch (err) {
+    console.error('Gagal memproses gambar:', err);
+    alert('Gagal memproses gambar screenshot. Silakan coba lagi.');
   }
-}
-
-function deleteCardScreenshot(cardId) {
-  sessionStorage.removeItem('resep_screen_' + cardId);
 }
 
 function escapeHtml(str) {
@@ -149,6 +179,13 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+function isUserEditingText() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName ? el.tagName.toLowerCase() : '';
+  return tag === 'textarea' || (tag === 'input' && el.type === 'text');
+}
+
 // =========================================================================
 // 3. INISIALISASI APLIKASI
 // =========================================================================
@@ -157,7 +194,6 @@ function initApp() {
   loadCardsFromStorage();
   checkSavedSession();
   setupEventListeners();
-  setupDragAndDrop();
 
   // Coba ambil data dari Database MySQL cPanel (api.php) jika sudah di-hosting
   fetchCardsFromServer();
@@ -170,9 +206,9 @@ function initApp() {
   }, 1000);
 
   // Polling sinkronisasi otomatis ke database cPanel
-  // (Tetap berjalan saat tab di-minimize agar notifikasi desktop Dokter & Apotek tetap terpantau)
+  // Jangan re-render jika sedang mengetik teks agar kursor/fokus tidak hilang
   setInterval(() => {
-    if (useServerDB && currentUser && !draggedCardId && !isDeleteMode) {
+    if (useServerDB && currentUser && !isDeleteMode && !isUserEditingText()) {
       fetchCardsFromServer();
     }
   }, 3000);
@@ -182,7 +218,7 @@ function initApp() {
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       onUserReturnToPage();
-      if (useServerDB && currentUser) {
+      if (useServerDB && currentUser && !isUserEditingText()) {
         fetchCardsFromServer();
       }
     }
@@ -190,7 +226,7 @@ function initApp() {
 
   // Sinkronisasi real-time antar tab browser lokal
   window.addEventListener('storage', (event) => {
-    if (event.key === STORAGE_CARDS_KEY) {
+    if (event.key === STORAGE_CARDS_KEY && !isUserEditingText()) {
       loadCardsFromStorage();
       renderBoard();
     }
@@ -210,13 +246,26 @@ async function fetchCardsFromServer() {
     const data = await res.json();
     if (data && data.ok && Array.isArray(data.cards)) {
       useServerDB = true;
-      cards = data.cards;
-      localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
-      renderBoard();
+
+      // Cegah re-render saat user sedang mengetik catatan staff agar kursor & fokus tidak hilang
+      if (isUserEditingText()) {
+        return;
+      }
+
+      // Hanya re-render jika data dari server memang ada perbedaan nyata
+      const isDifferent = JSON.stringify(cards) !== JSON.stringify(data.cards);
+      if (isDifferent) {
+        cards = data.cards;
+        localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
+        renderBoard();
+      }
     } else if (data && data.error) {
       console.warn('Info Database cPanel:', data.error);
     }
   } catch (err) {
+    // Jika dibuka di lokal tanpa server PHP/MySQL, otomatis tetap gunakan localStorage
+  }
+}
     // Jika dibuka di lokal tanpa server PHP/MySQL, otomatis tetap gunakan localStorage
   }
 }
@@ -879,22 +928,15 @@ function canTransitionStatus(currentStatus, targetStatus) {
 
   // ATURAN STAFF APOTEK:
   // Staff TIDAK BISA memaksa pindah dari "New" ke "Pending".
-  // Staff BISA memindahkan:
-  // - dari "New" atau "Pending" ke "Diskusi"
-  // - dari "New" atau "Pending" ke "On Progress"
-  // - dari "Diskusi" ke "On Progress"
-  // - dari "On Progress" ke "Done"
-  // - dari "Done" ke "History"
+  // Alur WAJIB melalui fase Diskusi terlebih dahulu:
+  // - dari "New" atau "Pending" -> WAJIB ke "Diskusi"
+  // - dari "Diskusi" -> ke "On Progress"
+  // - dari "On Progress" -> ke "Done"
+  // - dari "Done" -> ke "History"
   if (currentUser.role === 'apotek') {
     if (
       (currentStatus === 'new' || currentStatus === 'pending') &&
       targetStatus === 'diskusi'
-    ) {
-      return true;
-    }
-    if (
-      (currentStatus === 'new' || currentStatus === 'pending') &&
-      targetStatus === 'onprogress'
     ) {
       return true;
     }
@@ -935,8 +977,11 @@ function updateCardStatus(cardId, newStatus) {
     card.progressAt = now;
   } else if (newStatus === 'done') {
     card.doneAt = now;
+    // Bersihkan foto saat masuk ke Done agar kuota database hosting tetap ringan & tidak menumpuk
+    card.foto = null;
   } else if (newStatus === 'history') {
     card.completedAt = now;
+    card.foto = null;
   }
 
   syncUpsertCardToServer(card);
@@ -1008,31 +1053,6 @@ function createCardElement(card) {
   div.className = `resep-card card-${card.warna || 'yellow'}`;
   div.setAttribute('data-id', card.id);
 
-  // Drag and Drop:
-  // - Staff Apotek bisa drag card di New, Pending, Diskusi, On Progress (untuk maju ke fase berikutnya)
-  // - Dokter bisa drag card di New (untuk dipindah ke Pending)
-  const canDrag =
-    (isStaff && card.status !== 'done') ||
-    (isDokter && !isDeleteMode && card.status === 'new');
-
-  if (canDrag) {
-    div.setAttribute('draggable', 'true');
-    div.classList.add('draggable-card');
-
-    div.addEventListener('dragstart', (e) => {
-      draggedCardId = card.id;
-      div.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', card.id);
-    });
-
-    div.addEventListener('dragend', () => {
-      draggedCardId = null;
-      div.classList.remove('dragging');
-    });
-  } else {
-    div.setAttribute('draggable', 'false');
-  }
-
   // Jika Dokter sedang mengaktifkan Mode Pilih Hapus Card (Hanya New & Pending yang bisa dipilih)
   if (isDokter && isDeleteMode && isDeletablePhase) {
     div.classList.add('selectable-card');
@@ -1088,7 +1108,7 @@ function createCardElement(card) {
   div.appendChild(resepText);
 
   // 4. Area Diskusi Screenshot & Catatan Staff (Aktif di Diskusi atau Ditampilkan jika sudah pernah ada catatan/foto)
-  const currentScreenshot = getCardScreenshot(card.id);
+  const currentScreenshot = card.foto || null;
   const hasDiskusiData = card.status === 'diskusi' || !!currentScreenshot || !!card.keteranganFoto;
 
   if (hasDiskusiData) {
@@ -1115,6 +1135,14 @@ function createCardElement(card) {
       previewWrap.appendChild(img);
       diskusiBox.appendChild(previewWrap);
 
+      // Status pengiriman foto
+      const badgeStatus = document.createElement('div');
+      badgeStatus.style.textAlign = 'center';
+      badgeStatus.innerHTML = isStaff
+        ? `<span class="badge-foto-sukses">✅ Foto Terkirim ke Dokter</span>`
+        : `<span class="badge-foto-sukses">📸 Screenshot dari Staff Apotek</span>`;
+      diskusiBox.appendChild(badgeStatus);
+
       // Hanya staff yang boleh mengganti atau menghapus foto screenshot
       if (isStaff && card.status === 'diskusi') {
         const actWrap = document.createElement('div');
@@ -1126,12 +1154,7 @@ function createCardElement(card) {
         fileInput.style.display = 'none';
         fileInput.addEventListener('change', () => {
           if (fileInput.files && fileInput.files[0]) {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              setCardScreenshot(card.id, ev.target.result);
-              renderBoard();
-            };
-            reader.readAsDataURL(fileInput.files[0]);
+            handleIncomingImage(card, fileInput.files[0]);
           }
         });
         actWrap.appendChild(fileInput);
@@ -1147,7 +1170,9 @@ function createCardElement(card) {
         btnDel.className = 'btn-diskusi-subaction btn-diskusi-delete';
         btnDel.textContent = '🗑️ Hapus Foto';
         btnDel.addEventListener('click', () => {
-          deleteCardScreenshot(card.id);
+          card.foto = null;
+          syncUpsertCardToServer(card);
+          saveCardsToStorage();
           renderBoard();
         });
 
@@ -1162,26 +1187,23 @@ function createCardElement(card) {
         const pasteZone = document.createElement('div');
         pasteZone.className = 'diskusi-paste-zone';
         pasteZone.tabIndex = 0;
-        pasteZone.innerHTML = `📋 <strong>Klik &amp; Tekan Ctrl+V</strong> (hasil Win+Shift+S)<br><small style="color:#64748b;">atau klik untuk pilih gambar</small>`;
+        pasteZone.innerHTML = `📋 <strong>Klik di sini</strong> lalu tekan <strong>Ctrl + V</strong><br><small style="color:#0f766e;">(Screenshot Win + Shift + S)</small>`;
 
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = 'image/*';
-        fileInput.style.display = 'none';
-        fileInput.addEventListener('change', () => {
-          if (fileInput.files && fileInput.files[0]) {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              setCardScreenshot(card.id, ev.target.result);
-              renderBoard();
-            };
-            reader.readAsDataURL(fileInput.files[0]);
-          }
+        // Saat diklik, aktifkan zona fokus untuk Ctrl+V
+        pasteZone.addEventListener('click', () => {
+          activePasteCardId = card.id;
+          pasteZone.focus();
         });
-        pasteZone.appendChild(fileInput);
 
-        pasteZone.addEventListener('click', (e) => {
-          if (e.target !== fileInput) fileInput.click();
+        pasteZone.addEventListener('focus', () => {
+          activePasteCardId = card.id;
+          pasteZone.classList.add('is-active-paste');
+          pasteZone.innerHTML = `🎯 <strong>Area Aktif!</strong> Silakan tekan <strong>Ctrl + V</strong> sekarang...`;
+        });
+
+        pasteZone.addEventListener('blur', () => {
+          pasteZone.classList.remove('is-active-paste');
+          pasteZone.innerHTML = `📋 <strong>Klik di sini</strong> lalu tekan <strong>Ctrl + V</strong><br><small style="color:#0f766e;">(Screenshot Win + Shift + S)</small>`;
         });
 
         pasteZone.addEventListener('paste', (e) => {
@@ -1189,12 +1211,7 @@ function createCardElement(card) {
           for (let item of items) {
             if (item.type.indexOf('image') !== -1) {
               const blob = item.getAsFile();
-              const reader = new FileReader();
-              reader.onload = (ev) => {
-                setCardScreenshot(card.id, ev.target.result);
-                renderBoard();
-              };
-              reader.readAsDataURL(blob);
+              handleIncomingImage(card, blob);
               e.preventDefault();
               break;
             }
@@ -1202,12 +1219,41 @@ function createCardElement(card) {
         });
 
         diskusiBox.appendChild(pasteZone);
+
+        // Tombol alternatif: Pilih file dari komputer
+        const fileWrap = document.createElement('div');
+        fileWrap.className = 'diskusi-file-btn-wrap';
+
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = 'image/*';
+        fileInput.style.display = 'none';
+        fileInput.addEventListener('change', () => {
+          if (fileInput.files && fileInput.files[0]) {
+            handleIncomingImage(card, fileInput.files[0]);
+          }
+        });
+        fileWrap.appendChild(fileInput);
+
+        const btnPilihFile = document.createElement('button');
+        btnPilihFile.type = 'button';
+        btnPilihFile.className = 'btn-file-select';
+        btnPilihFile.textContent = '📁 atau klik di sini untuk pilih file dari komputer';
+        btnPilihFile.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          fileInput.click();
+        });
+        fileWrap.appendChild(btnPilihFile);
+
+        diskusiBox.appendChild(fileWrap);
       } else {
         // Tampilan untuk dokter jika staf belum pasang screenshot
         const noImgDiv = document.createElement('div');
         noImgDiv.style.fontSize = '0.76rem';
         noImgDiv.style.color = '#64748b';
         noImgDiv.style.fontStyle = 'italic';
+        noImgDiv.style.textAlign = 'center';
+        noImgDiv.style.padding = '8px 4px';
         noImgDiv.textContent = 'Menunggu foto screenshot dari staff apotek...';
         diskusiBox.appendChild(noImgDiv);
       }
@@ -1225,6 +1271,11 @@ function createCardElement(card) {
       ketInput.rows = 2;
       ketInput.placeholder = 'Tulis nominal harga obat / catatan staff di sini...';
       ketInput.value = card.keteranganFoto || '';
+
+      // Simpan perubahan teks secara real-time ke memori lokal saat user mengetik
+      ketInput.addEventListener('input', () => {
+        card.keteranganFoto = ketInput.value;
+      });
 
       const btnSaveKet = document.createElement('button');
       btnSaveKet.type = 'button';
@@ -1329,7 +1380,7 @@ function createCardElement(card) {
     controlsDiv.className = 'card-controls';
 
     if (card.status === 'new' || card.status === 'pending') {
-      // Pilihan ke Diskusi ATAU langsung ke On Progress
+      // Dari New atau Pending WAJIB melewati masa Diskusi terlebih dahulu
       const btnToDiskusi = document.createElement('button');
       btnToDiskusi.type = 'button';
       btnToDiskusi.className = 'btn-quick-action btn-to-diskusi';
@@ -1338,15 +1389,6 @@ function createCardElement(card) {
         updateCardStatus(card.id, 'diskusi')
       );
       controlsDiv.appendChild(btnToDiskusi);
-
-      const btnToProgress = document.createElement('button');
-      btnToProgress.type = 'button';
-      btnToProgress.className = 'btn-quick-action btn-to-progress';
-      btnToProgress.textContent = '⚡ Alihkan ke On Progress';
-      btnToProgress.addEventListener('click', () =>
-        updateCardStatus(card.id, 'onprogress')
-      );
-      controlsDiv.appendChild(btnToProgress);
     } else if (card.status === 'diskusi') {
       const btnToProgress = document.createElement('button');
       btnToProgress.type = 'button';
@@ -1548,46 +1590,7 @@ function exportHistoryToCSV() {
 }
 
 // =========================================================================
-// 11. DRAG AND DROP (SESUAI ATURAN DOKTER VS STAFF)
-// =========================================================================
-function setupDragAndDrop() {
-  const columnBoxes = document.querySelectorAll('.board-column');
-
-  columnBoxes.forEach((colBox) => {
-    const targetStatus = colBox.getAttribute('data-status');
-
-    colBox.addEventListener('dragover', (e) => {
-      if (!currentUser) return;
-      e.preventDefault();
-
-      const card = cards.find((c) => c.id === draggedCardId);
-      if (card && canTransitionStatus(card.status, targetStatus)) {
-        colBox.classList.add('drag-over');
-        colBox.classList.remove('drag-blocked');
-      } else {
-        colBox.classList.add('drag-blocked');
-        colBox.classList.remove('drag-over');
-      }
-    });
-
-    colBox.addEventListener('dragleave', () => {
-      colBox.classList.remove('drag-over', 'drag-blocked');
-    });
-
-    colBox.addEventListener('drop', (e) => {
-      e.preventDefault();
-      colBox.classList.remove('drag-over', 'drag-blocked');
-
-      if (!currentUser) return;
-
-      const cardId = draggedCardId || e.dataTransfer.getData('text/plain');
-      if (cardId && targetStatus) {
-        updateCardStatus(cardId, targetStatus);
-      }
-    });
-  });
-}
-
+// 11. EVENT LISTENERS
 // =========================================================================
 // 12. EVENT LISTENERS
 // =========================================================================
@@ -1669,6 +1672,40 @@ function setupEventListeners() {
   if (btnExportHistory) {
     btnExportHistory.addEventListener('click', exportHistoryToCSV);
   }
+  // Listener Global Paste Screenshot (Ctrl + V) khusus Staff Apotek
+  window.addEventListener('paste', (e) => {
+    if (!currentUser || currentUser.role !== 'apotek') return;
+
+    // Jangan potong paste jika user sedang mengetik teks di form input / modal
+    const tag = (e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '');
+    if (tag === 'input' && e.target.type !== 'file') return;
+    if (tag === 'textarea' && !e.target.classList.contains('diskusi-paste-zone')) return;
+
+    const items = (e.clipboardData || window.clipboardData).items;
+    let imageBlob = null;
+    for (let item of items) {
+      if (item.type.indexOf('image') !== -1) {
+        imageBlob = item.getAsFile();
+        break;
+      }
+    }
+    if (!imageBlob) return;
+
+    // Tentukan card target: prioritaskan card yang aktif, atau card di kolom Diskusi
+    let targetCard = null;
+    if (activePasteCardId) {
+      targetCard = cards.find((c) => c.id === activePasteCardId);
+    }
+    if (!targetCard) {
+      targetCard = cards.find((c) => c.status === 'diskusi');
+    }
+
+    if (targetCard) {
+      e.preventDefault();
+      handleIncomingImage(targetCard, imageBlob);
+    }
+  });
+
   historyOverlay.addEventListener('click', (e) => {
     if (e.target === historyOverlay) historyOverlay.classList.add('hidden');
   });
