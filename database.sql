@@ -12,6 +12,7 @@ CREATE TABLE `resep_cards` (
   `resep` TEXT NOT NULL,
   `foto` MEDIUMTEXT NULL,
   `keterangan_foto` TEXT NULL,
+  `sudah_bayar` TINYINT(1) NOT NULL DEFAULT 0,
   `warna` VARCHAR(20) NOT NULL DEFAULT 'yellow',
   `status` ENUM('new', 'pending', 'diskusi', 'onprogress', 'done', 'history') NOT NULL DEFAULT 'new',
   `created_at` BIGINT NOT NULL,

@@ -124,6 +124,7 @@ function ensureSchema($pdo) {
         'pasien'          => "VARCHAR(150) NOT NULL DEFAULT ''",
         'foto'            => "MEDIUMTEXT NULL",
         'keterangan_foto' => "TEXT NULL",
+        'sudah_bayar'     => "TINYINT(1) NOT NULL DEFAULT 0",
         'diskusi_at'      => "BIGINT NULL DEFAULT NULL"
     ];
     $existing = [];
@@ -163,6 +164,7 @@ if ($method === 'GET') {
             'resep' => $r['resep'],
             'foto' => $r['foto'] ?? null,
             'keteranganFoto' => $r['keterangan_foto'] ?? '',
+            'sudahBayar' => !empty($r['sudah_bayar']),
             'warna' => $r['warna'],
             'status' => $r['status'],
             'createdAt' => (int) $r['created_at'],
@@ -193,15 +195,16 @@ if ($method === 'POST') {
         $c = $input['card'];
         $stmt = $pdo->prepare("
             INSERT INTO `resep_cards`
-              (`id`, `pasien`, `dokter`, `resep`, `foto`, `keterangan_foto`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
+              (`id`, `pasien`, `dokter`, `resep`, `foto`, `keterangan_foto`, `sudah_bayar`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
             VALUES
-              (:id, :pasien, :dokter, :resep, :foto, :keterangan_foto, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
+              (:id, :pasien, :dokter, :resep, :foto, :keterangan_foto, :sudah_bayar, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
             ON DUPLICATE KEY UPDATE
               `pasien` = VALUES(`pasien`),
               `dokter` = VALUES(`dokter`),
               `resep` = VALUES(`resep`),
               `foto` = VALUES(`foto`),
               `keterangan_foto` = VALUES(`keterangan_foto`),
+              `sudah_bayar` = VALUES(`sudah_bayar`),
               `warna` = VALUES(`warna`),
               `status` = VALUES(`status`),
               `created_at` = VALUES(`created_at`),
@@ -219,6 +222,7 @@ if ($method === 'POST') {
             ':resep' => $c['resep'],
             ':foto' => !empty($c['foto']) ? $c['foto'] : null,
             ':keterangan_foto' => isset($c['keteranganFoto']) ? trim($c['keteranganFoto']) : null,
+            ':sudah_bayar' => !empty($c['sudahBayar']) ? 1 : 0,
             ':warna' => $c['warna'] ?? 'yellow',
             ':status' => $c['status'] ?? 'new',
             ':created_at' => $c['createdAt'] ?? (round(microtime(true) * 1000)),

@@ -160,10 +160,14 @@ function compressImage(fileOrBlob, maxWidth = 1600, quality = 0.8) {
 
 async function handleIncomingImage(cardRef, fileOrBlob) {
   if (!cardRef || !fileOrBlob) return;
+  localMutationVersion++;
+  lastLocalChangeAt = Date.now();
+  pendingSyncCount++;
   try {
     const compressedDataUrl = await compressImage(fileOrBlob);
     const card = cards.find((c) => c.id === cardRef.id) || cardRef;
     card.foto = compressedDataUrl;
+    lastLocalChangeAt = Date.now();
     saveCardsToStorage();
     renderBoard();
     const ok = await syncUpsertCardToServer(card);
@@ -173,6 +177,9 @@ async function handleIncomingImage(cardRef, fileOrBlob) {
   } catch (err) {
     console.error('Gagal memproses gambar:', err);
     alert('Gagal memproses gambar screenshot. Silakan coba lagi.');
+  } finally {
+    pendingSyncCount = Math.max(0, pendingSyncCount - 1);
+    lastLocalChangeAt = Date.now();
   }
 }
 
@@ -350,6 +357,7 @@ function initApp() {
 // Penanda perubahan lokal yang belum dikonfirmasi server (agar tidak ditimpa polling)
 let pendingSyncCount = 0;
 let lastLocalChangeAt = 0;
+let localMutationVersion = 0;
 const LOCAL_CHANGE_GRACE_MS = 5000;
 
 // Draft ketikan catatan staff per card (agar tidak hilang saat board di-render ulang)
@@ -368,7 +376,8 @@ function getDiskusiCardSignature(card) {
     dokter: (card.dokter || '').trim(),
     resep: (card.resep || '').trim(),
     keteranganFoto: (card.keteranganFoto || '').trim(),
-    fotoSig: fotoSig
+    fotoSig: fotoSig,
+    sudahBayar: !!card.sudahBayar
   };
 }
 
@@ -409,15 +418,19 @@ function checkForDiskusiChanges(newCards) {
     if (prevSig) {
       const fotoChanged = currSig.fotoSig !== prevSig.fotoSig;
       const ketChanged = currSig.keteranganFoto !== prevSig.keteranganFoto;
+      const bayarChanged = currSig.sudahBayar !== prevSig.sudahBayar;
       const pasienChanged = currSig.pasien !== prevSig.pasien;
       const dokterChanged = currSig.dokter !== prevSig.dokter;
       const resepChanged = currSig.resep !== prevSig.resep;
 
-      if (fotoChanged || ketChanged || pasienChanged || dokterChanged || resepChanged) {
+      if (fotoChanged || ketChanged || bayarChanged || pasienChanged || dokterChanged || resepChanged) {
         changeDetected = true;
         const namaTarget = currSig.pasien ? `Pasien ${currSig.pasien}` : `Resep ${currSig.dokter}`;
 
-        if (fotoChanged && ketChanged) {
+        if (bayarChanged && currSig.sudahBayar) {
+          notifTitle = `💳 SUDAH BAYAR: ${namaTarget}`;
+          notifBody = `Dokter mengkonfirmasi sudah bayar. Silakan alihkan ke On Progress!`;
+        } else if (fotoChanged && ketChanged) {
           notifTitle = `💬 DISKUSI: ${namaTarget}`;
           notifBody = `Staff memperbarui foto & catatan nominal obat.`;
         } else if (fotoChanged) {
@@ -459,6 +472,7 @@ function checkForDiskusiChanges(newCards) {
 
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
+  const fetchStartVersion = localMutationVersion;
   try {
     const res = await fetch(`${API_URL}?_t=${Date.now()}`, {
       cache: 'no-store',
@@ -468,18 +482,19 @@ async function fetchCardsFromServer() {
     if (data && data.ok && Array.isArray(data.cards)) {
       useServerDB = true;
 
-      // Pantau adanya perubahan baru pada fase Diskusi
-      checkForDiskusiChanges(data.cards);
-
-      // Jangan timpa data lokal jika user sedang mengetik,
-      // masih ada simpanan yang sedang dikirim, atau baru saja ada perubahan lokal
+      // Jangan timpa data lokal jika selama fetch berlangsung ada aksi lokal baru,
+      // user sedang mengetik, atau masih ada simpanan yang sedang dikirim
       if (
+        fetchStartVersion !== localMutationVersion ||
         isUserEditingText() ||
         pendingSyncCount > 0 ||
         Date.now() - lastLocalChangeAt < LOCAL_CHANGE_GRACE_MS
       ) {
         return;
       }
+
+      // Pantau adanya perubahan baru pada fase Diskusi
+      checkForDiskusiChanges(data.cards);
 
       // Hanya re-render jika data dari server memang ada perbedaan nyata
       const isDifferent = JSON.stringify(cards) !== JSON.stringify(data.cards);
@@ -497,6 +512,7 @@ async function fetchCardsFromServer() {
 }
 
 async function syncUpsertCardToServer(card) {
+  localMutationVersion++;
   lastLocalChangeAt = Date.now();
   if (card && card.status === 'diskusi') {
     previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
@@ -1099,6 +1115,7 @@ function handleSaveCard(e) {
       dokter: dokterVal,
       resep: resepVal,
       keteranganFoto: '',
+      sudahBayar: false,
       warna: resolveCardColor(dokterVal),
       status: 'new',
       createdAt: Date.now(),
@@ -1189,18 +1206,15 @@ function updateDeleteModeUI() {
 // =========================================================================
 // 9. PINDAH FASE CARD (SESUAI WEWENANG DOKTER VS STAFF APOTEK)
 // =========================================================================
-function canTransitionStatus(currentStatus, targetStatus) {
+function canTransitionStatus(currentStatus, targetStatus, card = null) {
   if (!currentUser) return false;
   if (currentStatus === targetStatus) return false;
 
   // ATURAN DOKTER:
-  // Dokter boleh memindahkan card dari "New" ke "Pending",
-  // dan dari "Done" ke "History" (ketika resep telah diambil).
+  // Dokter hanya boleh memindahkan card dari "New" ke "Pending".
+  // Untuk fase Done -> History hanya boleh ditekan oleh Staff Apotek.
   if (currentUser.role === 'dokter') {
     if (currentStatus === 'new' && targetStatus === 'pending') {
-      return true;
-    }
-    if (currentStatus === 'done' && targetStatus === 'history') {
       return true;
     }
     return false;
@@ -1210,7 +1224,7 @@ function canTransitionStatus(currentStatus, targetStatus) {
   // Staff TIDAK BISA memaksa pindah dari "New" ke "Pending".
   // Alur WAJIB melalui fase Diskusi terlebih dahulu:
   // - dari "New" atau "Pending" -> WAJIB ke "Diskusi"
-  // - dari "Diskusi" -> ke "On Progress"
+  // - dari "Diskusi" -> ke "On Progress" (HANYA JIKA Dokter sudah menekan tombol "Sudah Bayar")
   // - dari "On Progress" -> ke "Done"
   // - dari "Done" -> ke "History"
   if (currentUser.role === 'apotek') {
@@ -1221,7 +1235,7 @@ function canTransitionStatus(currentStatus, targetStatus) {
       return true;
     }
     if (currentStatus === 'diskusi' && targetStatus === 'onprogress') {
-      return true;
+      return Boolean(card && card.sudahBayar);
     }
     if (currentStatus === 'onprogress' && targetStatus === 'done') {
       return true;
@@ -1239,7 +1253,7 @@ function updateCardStatus(cardId, newStatus) {
   const card = cards.find((c) => c.id === cardId);
   if (!card) return;
 
-  if (!canTransitionStatus(card.status, newStatus)) {
+  if (!canTransitionStatus(card.status, newStatus, card)) {
     return;
   }
 
@@ -1252,6 +1266,7 @@ function updateCardStatus(cardId, newStatus) {
     pendingNotifState.nextFireAt = Math.max(pendingNotifState.nextFireAt, now + NOTIF_PENDING_INITIAL_DELAY_MS);
   } else if (newStatus === 'diskusi') {
     card.diskusiAt = now;
+    card.sudahBayar = false;
   } else if (newStatus === 'onprogress') {
     // Ketika dipindah ke On Progress, timer reset mulai dari 00:00 & foto diskusi langsung dibersihkan
     card.progressAt = now;
@@ -1268,6 +1283,18 @@ function updateCardStatus(cardId, newStatus) {
   syncUpsertCardToServer(card);
   saveCardsToStorage();
   renderBoard();
+}
+
+function confirmSudahBayar(cardId) {
+  if (!currentUser || currentUser.role !== 'dokter') return;
+  const card = cards.find((c) => c.id === cardId);
+  if (!card || card.status !== 'diskusi') return;
+
+  card.sudahBayar = true;
+  syncUpsertCardToServer(card);
+  saveCardsToStorage();
+  renderBoard();
+  showToastMessage('💳 Pembayaran Dikonfirmasi', 'Staff apotek sekarang dapat memindahkan resep ke On Progress.', 'done');
 }
 
 // =========================================================================
@@ -1640,18 +1667,26 @@ function createCardElement(card) {
       );
       controlsDiv.appendChild(btnToPending);
       div.appendChild(controlsDiv);
-    } else if (card.status === 'done') {
+    } else if (card.status === 'diskusi') {
       const controlsDiv = document.createElement('div');
       controlsDiv.className = 'card-controls';
 
-      const btnToHistory = document.createElement('button');
-      btnToHistory.type = 'button';
-      btnToHistory.className = 'btn-quick-action btn-to-history';
-      btnToHistory.textContent = '📦 Resep Telah Diambil (Ke History)';
-      btnToHistory.addEventListener('click', () =>
-        updateCardStatus(card.id, 'history')
-      );
-      controlsDiv.appendChild(btnToHistory);
+      if (card.sudahBayar) {
+        const badgeBayar = document.createElement('div');
+        badgeBayar.className = 'status-bayar-badge is-paid';
+        badgeBayar.textContent = '✅ Sudah Bayar (Menunggu Staff ke Progress)';
+        controlsDiv.appendChild(badgeBayar);
+      } else {
+        const btnSudahBayar = document.createElement('button');
+        btnSudahBayar.type = 'button';
+        btnSudahBayar.className = 'btn-quick-action btn-sudah-bayar';
+        btnSudahBayar.textContent = '💳 Sudah Bayar';
+        btnSudahBayar.addEventListener('click', () =>
+          confirmSudahBayar(card.id)
+        );
+        controlsDiv.appendChild(btnSudahBayar);
+      }
+
       div.appendChild(controlsDiv);
     }
   }
@@ -1672,14 +1707,26 @@ function createCardElement(card) {
       );
       controlsDiv.appendChild(btnToDiskusi);
     } else if (card.status === 'diskusi') {
-      const btnToProgress = document.createElement('button');
-      btnToProgress.type = 'button';
-      btnToProgress.className = 'btn-quick-action btn-to-progress';
-      btnToProgress.textContent = '⚡ Selesai Diskusi > On Progress';
-      btnToProgress.addEventListener('click', () =>
-        updateCardStatus(card.id, 'onprogress')
-      );
-      controlsDiv.appendChild(btnToProgress);
+      if (card.sudahBayar) {
+        const badgeBayar = document.createElement('div');
+        badgeBayar.className = 'status-bayar-badge is-paid';
+        badgeBayar.textContent = '✅ Dokter: Sudah Bayar';
+        controlsDiv.appendChild(badgeBayar);
+
+        const btnToProgress = document.createElement('button');
+        btnToProgress.type = 'button';
+        btnToProgress.className = 'btn-quick-action btn-to-progress';
+        btnToProgress.textContent = '⚡ Alihkan ke On Progress';
+        btnToProgress.addEventListener('click', () =>
+          updateCardStatus(card.id, 'onprogress')
+        );
+        controlsDiv.appendChild(btnToProgress);
+      } else {
+        const waitBayar = document.createElement('div');
+        waitBayar.className = 'status-bayar-badge is-waiting';
+        waitBayar.textContent = '⏳ Menunggu Dokter klik "Sudah Bayar"';
+        controlsDiv.appendChild(waitBayar);
+      }
     } else if (card.status === 'onprogress') {
       const btnToDone = document.createElement('button');
       btnToDone.type = 'button';
