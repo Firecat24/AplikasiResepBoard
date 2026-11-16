@@ -367,6 +367,84 @@ const ketDrafts = {};
 let diskusiBaselineReady = false;
 const previousDiskusiCardsMap = new Map();
 
+// Penanda card yang baru saja diedit/diperbarui (animasi border ganti warna sampai card diklik)
+const updatedHighlightCardIds = new Set();
+
+let cardEditBaselineReady = false;
+const previousCardsEditMap = new Map();
+
+function markCardAsUpdatedHighlight(cardId) {
+  if (!cardId) return;
+  updatedHighlightCardIds.add(cardId);
+}
+
+function clearCardUpdatedHighlight(cardId) {
+  updatedHighlightCardIds.delete(cardId);
+  const el = document.querySelector(`.resep-card[data-id="${cardId}"]`);
+  if (el) {
+    el.classList.remove('card-updated-highlight');
+  }
+}
+
+function checkForRecipeEditUpdates(newCards) {
+  if (!Array.isArray(newCards)) return;
+
+  if (!cardEditBaselineReady) {
+    previousCardsEditMap.clear();
+    newCards.forEach((c) => {
+      previousCardsEditMap.set(c.id, {
+        pasien: (c.pasien || '').trim(),
+        dokter: (c.dokter || '').trim(),
+        resep: (c.resep || '').trim()
+      });
+    });
+    cardEditBaselineReady = true;
+    return;
+  }
+
+  const isRecentLocalChange = Date.now() - lastLocalChangeAt < LOCAL_CHANGE_GRACE_MS;
+  const activeIds = new Set();
+
+  newCards.forEach((c) => {
+    activeIds.add(c.id);
+    const curr = {
+      pasien: (c.pasien || '').trim(),
+      dokter: (c.dokter || '').trim(),
+      resep: (c.resep || '').trim()
+    };
+    const prev = previousCardsEditMap.get(c.id);
+
+    if (prev && !isRecentLocalChange) {
+      const isRecipeEdited =
+        curr.pasien !== prev.pasien ||
+        curr.dokter !== prev.dokter ||
+        curr.resep !== prev.resep;
+
+      if (isRecipeEdited) {
+        markCardAsUpdatedHighlight(c.id);
+        // Jika edit terjadi di New atau Pending (di luar Diskusi), beri notifikasi juga ke Staff
+        if (c.status !== 'diskusi' && c.status !== 'history') {
+          const namaTarget = curr.pasien ? `Pasien ${curr.pasien}` : `Resep ${curr.dokter}`;
+          sendDesktopNotification(
+            `👨‍⚕️ RESEP DIEDIT: ${namaTarget}`,
+            `Dokter mengubah detail resep: ${curr.resep.slice(0, 45)}`,
+            'diskusi',
+            diskusiNotifState
+          );
+        }
+      }
+    }
+
+    previousCardsEditMap.set(c.id, curr);
+  });
+
+  for (const id of previousCardsEditMap.keys()) {
+    if (!activeIds.has(id)) {
+      previousCardsEditMap.delete(id);
+    }
+  }
+}
+
 function getDiskusiCardSignature(card) {
   const foto = card.foto || '';
   const fotoSig = foto ? `${foto.length}:${foto.slice(0, 30)}:${foto.slice(-30)}` : '';
@@ -426,6 +504,11 @@ function checkForDiskusiChanges(newCards) {
       if (fotoChanged || ketChanged || bayarChanged || pasienChanged || dokterChanged || resepChanged) {
         changeDetected = true;
         const namaTarget = currSig.pasien ? `Pasien ${currSig.pasien}` : `Resep ${currSig.dokter}`;
+
+        // Nyalakan animasi border card jika foto atau keterangan diubah oleh pihak lain (untuk Dokter)
+        if ((fotoChanged || ketChanged) && !isRecentLocalChange) {
+          markCardAsUpdatedHighlight(c.id);
+        }
 
         if (bayarChanged && currSig.sudahBayar) {
           notifTitle = `💳 SUDAH BAYAR: ${namaTarget}`;
@@ -493,6 +576,9 @@ async function fetchCardsFromServer() {
         return;
       }
 
+      // Pantau adanya pembaruan/edit resep untuk animasi highlight border card
+      checkForRecipeEditUpdates(data.cards);
+
       // Pantau adanya perubahan baru pada fase Diskusi
       checkForDiskusiChanges(data.cards);
 
@@ -514,8 +600,15 @@ async function fetchCardsFromServer() {
 async function syncUpsertCardToServer(card) {
   localMutationVersion++;
   lastLocalChangeAt = Date.now();
-  if (card && card.status === 'diskusi') {
-    previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+  if (card) {
+    previousCardsEditMap.set(card.id, {
+      pasien: (card.pasien || '').trim(),
+      dokter: (card.dokter || '').trim(),
+      resep: (card.resep || '').trim()
+    });
+    if (card.status === 'diskusi') {
+      previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+    }
   }
   if (!useServerDB) return true;
   pendingSyncCount++;
@@ -910,7 +1003,7 @@ function checkStaffNotifications() {
     } else if (now >= doneNotifState.nextFireAt) {
       const firstCard = doneCards[0];
       const title = `✅ OBAT SELESAI (${doneCards.length} Resep Siap Ambil)`;
-      const body = `Pasien boleh turun ke Lt. 1: ${firstCard.resep.slice(0, 70)}`;
+      const body = `Pasien boleh ambil di apotek: ${firstCard.resep.slice(0, 70)}`;
 
       sendDesktopNotification(title, body, 'done', doneNotifState);
       doneNotifState.nextFireAt = now + NOTIF_DONE_INTERVAL_MS; // Putar ulang setiap interval selesai
@@ -1360,6 +1453,13 @@ function createCardElement(card) {
   div.className = `resep-card card-${card.warna || 'yellow'}`;
   div.setAttribute('data-id', card.id);
 
+  if (updatedHighlightCardIds.has(card.id)) {
+    div.classList.add('card-updated-highlight');
+    div.addEventListener('click', () => {
+      clearCardUpdatedHighlight(card.id);
+    }, { once: true });
+  }
+
   // Jika Dokter sedang mengaktifkan Mode Pilih Hapus Card (Hanya New & Pending yang bisa dipilih)
   if (isDokter && isDeleteMode && isDeletablePhase) {
     div.classList.add('selectable-card');
@@ -1628,7 +1728,7 @@ function createCardElement(card) {
   if (card.status === 'done') {
     const doneBanner = document.createElement('div');
     doneBanner.className = 'status-ready-banner';
-    doneBanner.textContent = '✅ Selesai Diracik — Pasien Boleh Ambil di Lt. 1';
+    doneBanner.textContent = '✅ Selesai Diracik — Pasien Boleh Ambil di apotek';
     div.appendChild(doneBanner);
   } else {
     const metaRow = document.createElement('div');
