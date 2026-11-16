@@ -670,12 +670,12 @@ function showBoardPage() {
   if (currentUser.role === 'dokter') {
     dokterActions.classList.remove('hidden');
     rolePermissionHint.innerHTML =
-      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit (New, Pending, Diskusi)</em>, <em>Hapus (New &amp; Pending)</em>, serta memindahkan <em>New &rarr; Pending</em> &amp; <em>Done &rarr; History</em>.';
+      '👨‍⚕️ <strong>Mode Dokter:</strong> Bisa <em>Tambah</em>, <em>Edit (New, Pending, Diskusi)</em>, <em>Hapus (New &amp; Pending)</em>, konfirmasi <em>Sudah Bayar</em> di Diskusi, serta memindahkan <em>New &rarr; Pending</em> &amp; <em>Done &rarr; History</em>.';
   } else {
     dokterActions.classList.add('hidden');
     exitDeleteMode();
     rolePermissionHint.innerHTML =
-      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>Diskusi &rarr; On Progress &rarr; Done &rarr; History</em>, upload screenshot diskusi (Ctrl+V), dan input catatan harga nominal.';
+      '💊 <strong>Mode Staff Apotek:</strong> Bisa memindahkan fase ke <em>Diskusi &rarr; On Progress &rarr; Done</em>, upload screenshot diskusi (Ctrl+V), dan input catatan harga nominal.';
   }
 
   checkAutoPending();
@@ -1211,22 +1211,24 @@ function canTransitionStatus(currentStatus, targetStatus, card = null) {
   if (currentStatus === targetStatus) return false;
 
   // ATURAN DOKTER:
-  // Dokter hanya boleh memindahkan card dari "New" ke "Pending".
-  // Untuk fase Done -> History hanya boleh ditekan oleh Staff Apotek.
+  // Dokter boleh memindahkan card dari "New" ke "Pending",
+  // dan dari "Done" ke "History" (ketika resep telah diambil).
   if (currentUser.role === 'dokter') {
     if (currentStatus === 'new' && targetStatus === 'pending') {
+      return true;
+    }
+    if (currentStatus === 'done' && targetStatus === 'history') {
       return true;
     }
     return false;
   }
 
   // ATURAN STAFF APOTEK:
-  // Staff TIDAK BISA memaksa pindah dari "New" ke "Pending".
+  // Staff TIDAK BISA memaksa pindah dari "New" ke "Pending" ataupun dari "Done" ke "History".
   // Alur WAJIB melalui fase Diskusi terlebih dahulu:
   // - dari "New" atau "Pending" -> WAJIB ke "Diskusi"
   // - dari "Diskusi" -> ke "On Progress" (HANYA JIKA Dokter sudah menekan tombol "Sudah Bayar")
   // - dari "On Progress" -> ke "Done"
-  // - dari "Done" -> ke "History"
   if (currentUser.role === 'apotek') {
     if (
       (currentStatus === 'new' || currentStatus === 'pending') &&
@@ -1238,9 +1240,6 @@ function canTransitionStatus(currentStatus, targetStatus, card = null) {
       return Boolean(card && card.sudahBayar);
     }
     if (currentStatus === 'onprogress' && targetStatus === 'done') {
-      return true;
-    }
-    if (currentStatus === 'done' && targetStatus === 'history') {
       return true;
     }
     return false;
@@ -1688,11 +1687,24 @@ function createCardElement(card) {
       }
 
       div.appendChild(controlsDiv);
+    } else if (card.status === 'done') {
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'card-controls';
+
+      const btnToHistory = document.createElement('button');
+      btnToHistory.type = 'button';
+      btnToHistory.className = 'btn-quick-action btn-to-history';
+      btnToHistory.textContent = '📦 Resep Telah Diambil (Ke History)';
+      btnToHistory.addEventListener('click', () =>
+        updateCardStatus(card.id, 'history')
+      );
+      controlsDiv.appendChild(btnToHistory);
+      div.appendChild(controlsDiv);
     }
   }
 
   // STAFF APOTEK:
-  if (isStaff) {
+  if (isStaff && card.status !== 'done') {
     const controlsDiv = document.createElement('div');
     controlsDiv.className = 'card-controls';
 
@@ -1736,15 +1748,6 @@ function createCardElement(card) {
         updateCardStatus(card.id, 'done')
       );
       controlsDiv.appendChild(btnToDone);
-    } else if (card.status === 'done') {
-      const btnToHistory = document.createElement('button');
-      btnToHistory.type = 'button';
-      btnToHistory.className = 'btn-quick-action btn-to-history';
-      btnToHistory.textContent = '📦 Resep Telah Diambil (Ke History)';
-      btnToHistory.addEventListener('click', () =>
-        updateCardStatus(card.id, 'history')
-      );
-      controlsDiv.appendChild(btnToHistory);
     }
 
     div.appendChild(controlsDiv);
