@@ -448,12 +448,18 @@ function checkForRecipeEditUpdates(newCards) {
 function getDiskusiCardSignature(card) {
   const foto = card.foto || '';
   const fotoSig = foto ? `${foto.length}:${foto.slice(0, 30)}:${foto.slice(-30)}` : '';
+  const chats = Array.isArray(card.chatDiskusi) ? card.chatDiskusi : [];
+  const lastChat = chats.length > 0 ? chats[chats.length - 1] : null;
   return {
     id: card.id,
     pasien: (card.pasien || '').trim(),
     dokter: (card.dokter || '').trim(),
     resep: (card.resep || '').trim(),
     keteranganFoto: (card.keteranganFoto || '').trim(),
+    chatCount: chats.length,
+    lastChatId: lastChat ? (lastChat.id || '') : '',
+    lastChatSender: lastChat ? (lastChat.sender || '') : '',
+    lastChatText: lastChat ? (lastChat.text || '') : '',
     fotoSig: fotoSig,
     sudahBayar: !!card.sudahBayar
   };
@@ -496,23 +502,27 @@ function checkForDiskusiChanges(newCards) {
     if (prevSig) {
       const fotoChanged = currSig.fotoSig !== prevSig.fotoSig;
       const ketChanged = currSig.keteranganFoto !== prevSig.keteranganFoto;
+      const chatChanged = currSig.chatCount > prevSig.chatCount || (currSig.lastChatId !== prevSig.lastChatId && currSig.chatCount > 0);
       const bayarChanged = currSig.sudahBayar !== prevSig.sudahBayar;
       const pasienChanged = currSig.pasien !== prevSig.pasien;
       const dokterChanged = currSig.dokter !== prevSig.dokter;
       const resepChanged = currSig.resep !== prevSig.resep;
 
-      if (fotoChanged || ketChanged || bayarChanged || pasienChanged || dokterChanged || resepChanged) {
+      if (fotoChanged || ketChanged || chatChanged || bayarChanged || pasienChanged || dokterChanged || resepChanged) {
         changeDetected = true;
         const namaTarget = currSig.pasien ? `Pasien ${currSig.pasien}` : `Resep ${currSig.dokter}`;
 
-        // Nyalakan animasi border card jika foto atau keterangan diubah oleh pihak lain (untuk Dokter)
-        if ((fotoChanged || ketChanged) && !isRecentLocalChange) {
+        // Nyalakan animasi border card jika foto, keterangan, atau chat baru masuk dari pihak lain
+        if ((fotoChanged || ketChanged || chatChanged) && !isRecentLocalChange) {
           markCardAsUpdatedHighlight(c.id);
         }
 
         if (bayarChanged && currSig.sudahBayar) {
           notifTitle = `💳 SUDAH BAYAR: ${namaTarget}`;
           notifBody = `Dokter mengkonfirmasi sudah bayar. Silakan alihkan ke On Progress!`;
+        } else if (chatChanged) {
+          notifTitle = `💬 CHAT DISKUSI: ${namaTarget}`;
+          notifBody = `${currSig.lastChatSender}: "${currSig.lastChatText.slice(0, 50)}"`;
         } else if (fotoChanged && ketChanged) {
           notifTitle = `💬 DISKUSI: ${namaTarget}`;
           notifBody = `Staff memperbarui foto & catatan nominal obat.`;
@@ -632,6 +642,72 @@ async function syncUpsertCardToServer(card) {
     return true;
   } catch (err) {
     showToastMessage('❌ Gagal Menyimpan', 'Koneksi ke server terputus', 'pending');
+    return false;
+  } finally {
+    pendingSyncCount = Math.max(0, pendingSyncCount - 1);
+    lastLocalChangeAt = Date.now();
+  }
+}
+
+async function sendChatMessage(cardId, rawText) {
+  if (!currentUser) return false;
+  const text = (rawText || '').trim();
+  if (!text) return false;
+
+  const card = cards.find((c) => c.id === cardId);
+  if (!card) return false;
+
+  if (!Array.isArray(card.chatDiskusi)) {
+    card.chatDiskusi = [];
+  }
+
+  const newMsg = {
+    id: 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    sender: currentUser.nama || 'User',
+    role: currentUser.role || '',
+    text: text,
+    time: Date.now()
+  };
+
+  card.chatDiskusi.push(newMsg);
+  localMutationVersion++;
+  lastLocalChangeAt = Date.now();
+  if (card.status === 'diskusi') {
+    previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+  }
+  delete ketDrafts[card.id];
+  saveCardsToStorage();
+  renderBoard();
+
+  if (!useServerDB) return true;
+  pendingSyncCount++;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        action: 'send_chat',
+        cardId: card.id,
+        message: newMsg
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+      showToastMessage('❌ Gagal Kirim Chat', msg, 'pending');
+      return false;
+    }
+    if (Array.isArray(data.chatDiskusi)) {
+      card.chatDiskusi = data.chatDiskusi;
+      previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+      saveCardsToStorage();
+    }
+    return true;
+  } catch (err) {
+    showToastMessage('❌ Gagal Kirim Chat', 'Koneksi ke server terputus', 'pending');
     return false;
   } finally {
     pendingSyncCount = Math.max(0, pendingSyncCount - 1);
@@ -1208,6 +1284,7 @@ function handleSaveCard(e) {
       dokter: dokterVal,
       resep: resepVal,
       keteranganFoto: '',
+      chatDiskusi: [],
       sudahBayar: false,
       warna: resolveCardColor(dokterVal),
       status: 'new',
@@ -1514,9 +1591,14 @@ function createCardElement(card) {
   resepText.textContent = card.resep;
   div.appendChild(resepText);
 
-  // 4. Area Diskusi Screenshot & Catatan Staff (Aktif di Diskusi atau Ditampilkan jika sudah pernah ada catatan/foto)
+  // 4. Area Diskusi Screenshot & Chat Diskusi (Aktif di Diskusi atau Ditampilkan jika sudah pernah ada chat/foto)
   const currentScreenshot = card.foto || null;
-  const hasDiskusiData = card.status === 'diskusi' || !!currentScreenshot || !!card.keteranganFoto;
+  const chatMessages = Array.isArray(card.chatDiskusi) ? card.chatDiskusi : [];
+  const hasDiskusiData =
+    card.status === 'diskusi' ||
+    !!currentScreenshot ||
+    !!card.keteranganFoto ||
+    chatMessages.length > 0;
 
   if (hasDiskusiData) {
     const diskusiBox = document.createElement('div');
@@ -1657,70 +1739,105 @@ function createCardElement(card) {
       }
     }
 
-    // Bagian Keterangan Foto / Catatan Nominal Staff
-    const ketWrap = document.createElement('div');
-    ketWrap.className = 'diskusi-keterangan-wrap';
+    // Bagian Chat Diskusi (Kotak tinggi tetap & scrollable, gaya bubble chat)
+    const chatWrap = document.createElement('div');
+    chatWrap.className = 'diskusi-chat-wrap';
 
-    if (isStaff && card.status === 'diskusi') {
-      // Staff bisa mengedit & menyimpan catatan keterangan foto
-      ketWrap.innerHTML = `<label class="diskusi-keterangan-label">💬 Catatan Staff / Nominal Obat:</label>`;
-      const ketInput = document.createElement('textarea');
-      ketInput.className = 'diskusi-keterangan-input';
-      ketInput.rows = 2;
-      ketInput.placeholder = 'Tulis nominal harga obat / catatan staff di sini...';
-      // Pakai draft ketikan jika ada (agar tidak hilang saat board di-render ulang)
-      ketInput.value = ketDrafts[card.id] !== undefined ? ketDrafts[card.id] : (card.keteranganFoto || '');
+    const chatLabel = document.createElement('div');
+    chatLabel.className = 'diskusi-keterangan-label';
+    chatLabel.textContent = '💬 Chat Diskusi:';
+    chatWrap.appendChild(chatLabel);
 
-      // Ketikan disimpan sebagai draft dulu; baru dikirim ke server saat klik Simpan / keluar kolom
-      ketInput.addEventListener('input', () => {
-        ketDrafts[card.id] = ketInput.value;
+    const chatBox = document.createElement('div');
+    chatBox.className = 'diskusi-chat-messages';
+
+    const hasLegacyKet = !!(card.keteranganFoto && card.keteranganFoto.trim());
+    if (!hasLegacyKet && chatMessages.length === 0) {
+      const emptyChat = document.createElement('div');
+      emptyChat.className = 'diskusi-chat-empty';
+      emptyChat.textContent = 'Belum ada pesan diskusi...';
+      chatBox.appendChild(emptyChat);
+    } else {
+      if (hasLegacyKet) {
+        const legacyBubble = document.createElement('div');
+        legacyBubble.className = 'chat-bubble is-other';
+        legacyBubble.innerHTML = `<div class="chat-bubble-meta">Catatan Staff</div><div class="chat-bubble-text">${escapeHtml(card.keteranganFoto)}</div>`;
+        chatBox.appendChild(legacyBubble);
+      }
+
+      chatMessages.forEach((m) => {
+        const isMine = currentUser && m.role === currentUser.role && (m.role !== 'dokter' || m.sender === currentUser.nama);
+        const bubble = document.createElement('div');
+        bubble.className = `chat-bubble ${isMine ? 'is-mine' : 'is-other'}`;
+
+        const timeStr = m.time
+          ? new Date(m.time).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+          : '';
+        const meta = document.createElement('div');
+        meta.className = 'chat-bubble-meta';
+        meta.textContent = `${m.sender || (m.role === 'dokter' ? 'Dokter' : 'Staff Apotek')}${timeStr ? ' • ' + timeStr : ''}`;
+
+        const textEl = document.createElement('div');
+        textEl.className = 'chat-bubble-text';
+        textEl.textContent = m.text || '';
+
+        bubble.appendChild(meta);
+        bubble.appendChild(textEl);
+        chatBox.appendChild(bubble);
+      });
+    }
+
+    chatWrap.appendChild(chatBox);
+    // Auto-scroll ke pesan paling bawah setelah dirender
+    requestAnimationFrame(() => {
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    // Bar ketik pesan aktif di fase Diskusi untuk Dokter maupun Staff Apotek
+    if (card.status === 'diskusi') {
+      const inputRow = document.createElement('div');
+      inputRow.className = 'diskusi-chat-input-row';
+
+      const chatInput = document.createElement('input');
+      chatInput.type = 'text';
+      chatInput.className = 'diskusi-chat-input';
+      chatInput.placeholder = 'Tulis pesan diskusi...';
+      chatInput.value = ketDrafts[card.id] !== undefined ? ketDrafts[card.id] : '';
+
+      chatInput.addEventListener('input', () => {
+        ketDrafts[card.id] = chatInput.value;
         lastLocalChangeAt = Date.now();
       });
 
-      const saveKeterangan = async () => {
-        const target = cards.find((c) => c.id === card.id) || card;
-        const val = ketInput.value.trim();
-        if (val === (target.keteranganFoto || '') && ketDrafts[card.id] === undefined) return true;
-        target.keteranganFoto = val;
-        saveCardsToStorage();
-        const ok = await syncUpsertCardToServer(target);
-        if (ok) delete ketDrafts[card.id];
-        return ok;
+      const handleSend = async () => {
+        const val = chatInput.value.trim();
+        if (!val) return;
+        chatInput.value = '';
+        delete ketDrafts[card.id];
+        await sendChatMessage(card.id, val);
       };
 
-      const btnSaveKet = document.createElement('button');
-      btnSaveKet.type = 'button';
-      btnSaveKet.className = 'btn-save-keterangan';
-      btnSaveKet.textContent = '💾 Simpan Catatan';
-      // mousedown mencegah textarea kehilangan fokus duluan sebelum tombol tertekan
-      btnSaveKet.addEventListener('mousedown', (e) => e.preventDefault());
-      btnSaveKet.addEventListener('click', async () => {
-        btnSaveKet.textContent = '⏳ Menyimpan...';
-        const ok = await saveKeterangan();
-        btnSaveKet.textContent = ok ? '✅ Tersimpan!' : '❌ Gagal';
-        setTimeout(() => {
-          btnSaveKet.textContent = '💾 Simpan Catatan';
-        }, 1500);
+      chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleSend();
+        }
       });
 
-      ketInput.addEventListener('blur', () => {
-        saveKeterangan();
-      });
+      const btnSend = document.createElement('button');
+      btnSend.type = 'button';
+      btnSend.className = 'btn-chat-send';
+      btnSend.title = 'Kirim Pesan (Enter)';
+      btnSend.textContent = '➤';
+      btnSend.addEventListener('mousedown', (e) => e.preventDefault());
+      btnSend.addEventListener('click', handleSend);
 
-      ketWrap.appendChild(ketInput);
-      ketWrap.appendChild(btnSaveKet);
-    } else {
-      // Dokter atau fase lanjut: Hanya read-only (Dokter TIDAK BISA merubah keterangan foto)
-      ketWrap.innerHTML = `<div class="diskusi-keterangan-label">💬 Catatan Staff / Nominal Obat:</div>`;
-      const ketRead = document.createElement('div');
-      ketRead.className = 'diskusi-keterangan-readonly';
-      ketRead.textContent = card.keteranganFoto
-        ? card.keteranganFoto
-        : '(Belum ada catatan dari staff apotek)';
-      ketWrap.appendChild(ketRead);
+      inputRow.appendChild(chatInput);
+      inputRow.appendChild(btnSend);
+      chatWrap.appendChild(inputRow);
     }
 
-    diskusiBox.appendChild(ketWrap);
+    diskusiBox.appendChild(chatWrap);
     div.appendChild(diskusiBox);
   }
 
@@ -1975,13 +2092,19 @@ function renderHistoryList() {
     box.appendChild(pasienDiv);
     box.appendChild(resepDiv);
 
-    if (item.keteranganFoto) {
+    const chatItems = Array.isArray(item.chatDiskusi) ? item.chatDiskusi : [];
+    if (item.keteranganFoto || chatItems.length > 0) {
       const ketDiv = document.createElement('div');
       ketDiv.style.marginTop = '6px';
       ketDiv.style.fontSize = '0.78rem';
       ketDiv.style.color = '#0e7490';
       ketDiv.style.fontWeight = '500';
-      ketDiv.textContent = `💬 Catatan Staff / Diskusi: ${item.keteranganFoto}`;
+      const parts = [];
+      if (item.keteranganFoto) parts.push(`Catatan: ${item.keteranganFoto}`);
+      chatItems.forEach((m) => {
+        parts.push(`${m.sender || m.role}: ${m.text}`);
+      });
+      ketDiv.textContent = `💬 Diskusi: ${parts.join(' | ')}`;
       box.appendChild(ketDiv);
     }
 
@@ -1998,13 +2121,18 @@ function exportHistoryToCSV() {
     return;
   }
 
-  const headers = ['ID Card', 'Nama Pasien', 'Nama Dokter', 'Resep / Keterangan', 'Catatan Staff / Diskusi', 'Tanggal & Waktu Diambil'];
+  const headers = ['ID Card', 'Nama Pasien', 'Nama Dokter', 'Resep / Keterangan', 'Chat / Catatan Diskusi', 'Tanggal & Waktu Diambil'];
   const rows = filteredCards.map((c) => {
     const waktu = c.completedAt ? new Date(c.completedAt).toLocaleString('id-ID') : '-';
     const cleanPasien = `"${(c.pasien || '').replace(/"/g, '""')}"`;
     const cleanDokter = `"${(c.dokter || '').replace(/"/g, '""')}"`;
     const cleanResep = `"${(c.resep || '').replace(/"/g, '""')}"`;
-    const cleanKet = `"${(c.keteranganFoto || '').replace(/"/g, '""')}"`;
+    const chatParts = [];
+    if (c.keteranganFoto) chatParts.push(c.keteranganFoto);
+    if (Array.isArray(c.chatDiskusi)) {
+      c.chatDiskusi.forEach((m) => chatParts.push(`${m.sender || m.role}: ${m.text}`));
+    }
+    const cleanKet = `"${chatParts.join(' | ').replace(/"/g, '""')}"`;
     return [c.id, cleanPasien, cleanDokter, cleanResep, cleanKet, `"${waktu}"`].join(',');
   });
 

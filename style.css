@@ -834,6 +834,111 @@ body {
   color: #475569;
 }
 
+/* Kotak Chat Diskusi (Tinggi Tetap & Scrollable) */
+.diskusi-chat-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.diskusi-chat-messages {
+  height: 165px;
+  overflow-y: auto;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diskusi-chat-empty {
+  margin: auto;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-style: italic;
+  text-align: center;
+}
+
+.chat-bubble {
+  max-width: 85%;
+  padding: 6px 9px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.chat-bubble.is-mine {
+  align-self: flex-end;
+  background: #cffafe;
+  color: #0e7490;
+  border: 1px solid #a5f3fc;
+  border-bottom-right-radius: 3px;
+}
+
+.chat-bubble.is-other {
+  align-self: flex-start;
+  background: #ffffff;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  border-bottom-left-radius: 3px;
+}
+
+.chat-bubble-meta {
+  font-size: 0.66rem;
+  font-weight: 700;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+.chat-bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diskusi-chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diskusi-chat-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  font-family: inherit;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  outline: none;
+  background: #ffffff;
+}
+
+.diskusi-chat-input:focus {
+  border-color: #0891b2;
+  box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
+}
+
+.btn-chat-send {
+  flex-shrink: 0;
+  background: #0891b2;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-chat-send:hover {
+  background: #0e7490;
+}
+
 .diskusi-keterangan-input {
   width: 100%;
   font-size: 0.8rem;

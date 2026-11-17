@@ -124,6 +124,7 @@ function ensureSchema($pdo) {
         'pasien'          => "VARCHAR(150) NOT NULL DEFAULT ''",
         'foto'            => "MEDIUMTEXT NULL",
         'keterangan_foto' => "TEXT NULL",
+        'chat_diskusi'    => "MEDIUMTEXT NULL",
         'sudah_bayar'     => "TINYINT(1) NOT NULL DEFAULT 0",
         'diskusi_at'      => "BIGINT NULL DEFAULT NULL"
     ];
@@ -157,6 +158,14 @@ if ($method === 'GET') {
     $rows = $stmt->fetchAll();
 
     $cards = array_map(function ($r) {
+        $chatRaw = $r['chat_diskusi'] ?? null;
+        $chatList = [];
+        if ($chatRaw) {
+            $decoded = json_decode($chatRaw, true);
+            if (is_array($decoded)) {
+                $chatList = $decoded;
+            }
+        }
         return [
             'id' => $r['id'],
             'pasien' => $r['pasien'] ?? '',
@@ -164,6 +173,7 @@ if ($method === 'GET') {
             'resep' => $r['resep'],
             'foto' => $r['foto'] ?? null,
             'keteranganFoto' => $r['keterangan_foto'] ?? '',
+            'chatDiskusi' => $chatList,
             'sudahBayar' => !empty($r['sudah_bayar']),
             'warna' => $r['warna'],
             'status' => $r['status'],
@@ -193,17 +203,21 @@ if ($method === 'POST') {
 
     if ($action === 'upsert' && isset($input['card'])) {
         $c = $input['card'];
+        $chatJson = (isset($c['chatDiskusi']) && is_array($c['chatDiskusi']))
+            ? json_encode($c['chatDiskusi'], JSON_UNESCAPED_UNICODE)
+            : null;
         $stmt = $pdo->prepare("
             INSERT INTO `resep_cards`
-              (`id`, `pasien`, `dokter`, `resep`, `foto`, `keterangan_foto`, `sudah_bayar`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
+              (`id`, `pasien`, `dokter`, `resep`, `foto`, `keterangan_foto`, `chat_diskusi`, `sudah_bayar`, `warna`, `status`, `created_at`, `pending_at`, `diskusi_at`, `progress_at`, `completed_at`)
             VALUES
-              (:id, :pasien, :dokter, :resep, :foto, :keterangan_foto, :sudah_bayar, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
+              (:id, :pasien, :dokter, :resep, :foto, :keterangan_foto, :chat_diskusi, :sudah_bayar, :warna, :status, :created_at, :pending_at, :diskusi_at, :progress_at, :completed_at)
             ON DUPLICATE KEY UPDATE
               `pasien` = VALUES(`pasien`),
               `dokter` = VALUES(`dokter`),
               `resep` = VALUES(`resep`),
               `foto` = VALUES(`foto`),
               `keterangan_foto` = VALUES(`keterangan_foto`),
+              `chat_diskusi` = COALESCE(VALUES(`chat_diskusi`), `chat_diskusi`),
               `sudah_bayar` = VALUES(`sudah_bayar`),
               `warna` = VALUES(`warna`),
               `status` = VALUES(`status`),
@@ -222,6 +236,7 @@ if ($method === 'POST') {
             ':resep' => $c['resep'],
             ':foto' => !empty($c['foto']) ? $c['foto'] : null,
             ':keterangan_foto' => isset($c['keteranganFoto']) ? trim($c['keteranganFoto']) : null,
+            ':chat_diskusi' => $chatJson,
             ':sudah_bayar' => !empty($c['sudahBayar']) ? 1 : 0,
             ':warna' => $c['warna'] ?? 'yellow',
             ':status' => $c['status'] ?? 'new',
@@ -239,6 +254,75 @@ if ($method === 'POST') {
 
         echo json_encode(['ok' => true]);
         exit;
+    }
+
+    if ($action === 'send_chat' && isset($input['cardId']) && isset($input['message'])) {
+        $cardId = trim($input['cardId']);
+        $msg = $input['message'];
+        $msgText = trim($msg['text'] ?? '');
+        if ($cardId === '' || $msgText === '') {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Pesan chat tidak boleh kosong']);
+            exit;
+        }
+
+        $cleanMsg = [
+            'id' => (string) ($msg['id'] ?? ('msg-' . round(microtime(true) * 1000))),
+            'sender' => trim($msg['sender'] ?? 'User'),
+            'role' => trim($msg['role'] ?? ''),
+            'text' => $msgText,
+            'time' => (int) ($msg['time'] ?? round(microtime(true) * 1000))
+        ];
+
+        try {
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare("SELECT `chat_diskusi` FROM `resep_cards` WHERE `id` = :id FOR UPDATE");
+            $stmt->execute([':id' => $cardId]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                $pdo->rollBack();
+                http_response_code(404);
+                echo json_encode(['ok' => false, 'error' => 'Card tidak ditemukan']);
+                exit;
+            }
+
+            $list = [];
+            if (!empty($row['chat_diskusi'])) {
+                $decoded = json_decode($row['chat_diskusi'], true);
+                if (is_array($decoded)) {
+                    $list = $decoded;
+                }
+            }
+
+            // Cegah duplikat jika pesan dengan ID sama dikirim ulang
+            $exists = false;
+            foreach ($list as $item) {
+                if (($item['id'] ?? '') === $cleanMsg['id']) {
+                    $exists = true;
+                    break;
+                }
+            }
+            if (!$exists) {
+                $list[] = $cleanMsg;
+            }
+
+            $upd = $pdo->prepare("UPDATE `resep_cards` SET `chat_diskusi` = :chat WHERE `id` = :id");
+            $upd->execute([
+                ':chat' => json_encode($list, JSON_UNESCAPED_UNICODE),
+                ':id' => $cardId
+            ]);
+            $pdo->commit();
+
+            echo json_encode(['ok' => true, 'chatDiskusi' => $list]);
+            exit;
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            http_response_code(500);
+            echo json_encode(['ok' => false, 'error' => 'Gagal kirim chat: ' . $e->getMessage()]);
+            exit;
+        }
     }
 
     if ($action === 'delete' && isset($input['ids']) && is_array($input['ids'])) {
