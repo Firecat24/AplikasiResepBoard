@@ -26,7 +26,133 @@ const NOTIF_RETURN_PAGE_DELAY_MS = 20 * 1000;
 const STORAGE_CARDS_KEY = 'mediboard_resep_cards_v2';
 const STORAGE_SESSION_KEY = 'mediboard_logged_user';
 const STORAGE_DRAFT_RESEP_KEY = 'mediboard_draft_resep';
+const STORAGE_NOTIF_SETTINGS_KEY = 'mediboard_notif_settings_v1';
 const API_URL = 'api.php'; // Endpoint untuk autentikasi & koneksi Database MySQL di cPanel
+
+const DEFAULT_NOTIF_SETTINGS = {
+  masterEnabled: true,
+  soundEnabled: true,
+  returnDelayVal: 20,
+  returnDelayUnit: 'sec',
+  newEnabled: true,
+  pendingEnabled: true,
+  pendingIntervalVal: 20,
+  pendingIntervalUnit: 'sec',
+  diskusiEnabled: true,
+  diskusiIntervalVal: 20,
+  diskusiIntervalUnit: 'sec',
+  progressEnabled: true,
+  progressIntervalVal: 20,
+  progressIntervalUnit: 'sec',
+  doneEnabled: true,
+  doneIntervalVal: 20,
+  doneIntervalUnit: 'sec'
+};
+
+let notifSettings = { ...DEFAULT_NOTIF_SETTINGS };
+
+function getNotifStorageKeyForUser(username) {
+  const uname = (username || (currentUser && currentUser.username) || 'guest').trim();
+  return `${STORAGE_NOTIF_SETTINGS_KEY}_${uname}`;
+}
+
+function loadNotifSettings(username) {
+  try {
+    const raw = localStorage.getItem(getNotifStorageKeyForUser(username));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      notifSettings = { ...DEFAULT_NOTIF_SETTINGS, ...parsed };
+    } else {
+      notifSettings = { ...DEFAULT_NOTIF_SETTINGS };
+    }
+  } catch (e) {
+    notifSettings = { ...DEFAULT_NOTIF_SETTINGS };
+  }
+}
+
+function saveNotifSettings(username) {
+  localStorage.setItem(getNotifStorageKeyForUser(username), JSON.stringify(notifSettings));
+}
+
+async function fetchNotifSettingsFromServer() {
+  if (!currentUser || !currentUser.username || window.location.protocol === 'file:') return;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        action: 'get_notif_settings',
+        username: currentUser.username
+      })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.ok && data.settings && typeof data.settings === 'object') {
+      notifSettings = { ...DEFAULT_NOTIF_SETTINGS, ...data.settings };
+      saveNotifSettings(currentUser.username);
+    }
+  } catch (e) {
+    // Abaikan jika offline / mode lokal tanpa PHP
+  }
+}
+
+async function syncNotifSettingsToServer() {
+  if (!currentUser || !currentUser.username || window.location.protocol === 'file:') return;
+  try {
+    await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        action: 'save_notif_settings',
+        username: currentUser.username,
+        settings: notifSettings
+      })
+    });
+  } catch (e) {
+    // Abaikan jika offline / mode lokal tanpa PHP
+  }
+}
+
+function toMs(val, unit) {
+  const num = Math.max(1, Number(val) || 20);
+  return num * (unit === 'min' ? 60 * 1000 : 1000);
+}
+
+function getReturnPageDelayMs() {
+  return toMs(notifSettings.returnDelayVal, notifSettings.returnDelayUnit);
+}
+
+function getNotifIntervalMs(type) {
+  if (type === 'pending') return toMs(notifSettings.pendingIntervalVal, notifSettings.pendingIntervalUnit);
+  if (type === 'diskusi') return toMs(notifSettings.diskusiIntervalVal, notifSettings.diskusiIntervalUnit);
+  if (type === 'onprogress') return toMs(notifSettings.progressIntervalVal, notifSettings.progressIntervalUnit);
+  if (type === 'done') return toMs(notifSettings.doneIntervalVal, notifSettings.doneIntervalUnit);
+  return 20 * 1000;
+}
+
+function isNotifEnabledFor(type) {
+  if (!notifSettings.masterEnabled) return false;
+  if (type === 'new') return notifSettings.newEnabled !== false;
+  if (type === 'pending') return notifSettings.pendingEnabled !== false;
+  if (type === 'diskusi') return notifSettings.diskusiEnabled !== false;
+  if (type === 'onprogress') return notifSettings.progressEnabled !== false;
+  if (type === 'done') return notifSettings.doneEnabled !== false;
+  return true;
+}
+
+function isLocalDevEnvironment() {
+  return (
+    window.location.protocol === 'file:' ||
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+}
 
 // =========================================================================
 // 2. STATE & ELEMEN DOM
@@ -50,6 +176,7 @@ const inputPassword = document.getElementById('password');
 const btnTogglePassword = document.getElementById('btn-toggle-password');
 const loginError = document.getElementById('login-error');
 const demoChips = document.querySelectorAll('.demo-chip');
+const localDevLoginBox = document.getElementById('local-dev-login-box');
 
 // Elemen Topbar & Profil
 const profileAvatar = document.getElementById('profile-avatar');
@@ -94,6 +221,14 @@ const filterInputDayWrap = document.getElementById('filter-input-day-wrap');
 const filterInputMonthWrap = document.getElementById('filter-input-month-wrap');
 const filterInputYearWrap = document.getElementById('filter-input-year-wrap');
 const historySummaryInfo = document.getElementById('history-summary-info');
+
+// Elemen Pengaturan Notifikasi
+const btnOpenNotifSettings = document.getElementById('btn-open-notif-settings');
+const notifSettingsOverlay = document.getElementById('notif-settings-overlay');
+const btnCloseNotifSettings = document.getElementById('btn-close-notif-settings');
+const btnCloseNotifSettingsBottom = document.getElementById('btn-close-notif-settings-bottom');
+const btnSaveNotifSettings = document.getElementById('btn-save-notif-settings');
+const btnResetNotifSettings = document.getElementById('btn-reset-notif-settings');
 
 // Elemen Modal Tambah / Edit Card
 const modalOverlay = document.getElementById('modal-overlay');
@@ -307,6 +442,10 @@ function isUserEditingText() {
 // 3. INISIALISASI APLIKASI
 // =========================================================================
 function initApp() {
+  loadNotifSettings();
+  if (typeof initLocalDevLogin === 'function') {
+    initLocalDevLogin();
+  }
   initHistoryFilters();
   loadCardsFromStorage();
   checkSavedSession();
@@ -466,10 +605,11 @@ function getDiskusiCardSignature(card) {
 }
 
 function notifyDiskusiChange(title, body) {
+  if (!isNotifEnabledFor('diskusi')) return;
   diskusiNotifState.title = title;
   diskusiNotifState.body = body;
   diskusiNotifState.hasUnread = true;
-  diskusiNotifState.nextFireAt = Date.now() + NOTIF_DISKUSI_INTERVAL_MS;
+  diskusiNotifState.nextFireAt = Date.now() + getNotifIntervalMs('diskusi');
 
   sendDesktopNotification(title, body, 'diskusi', diskusiNotifState);
 }
@@ -756,6 +896,8 @@ function checkSavedSession() {
   if (saved) {
     try {
       currentUser = JSON.parse(saved);
+      loadNotifSettings(currentUser.username);
+      fetchNotifSettingsFromServer();
       showBoardPage();
       return;
     } catch (e) {
@@ -763,6 +905,66 @@ function checkSavedSession() {
     }
   }
   showLoginPage();
+}
+
+/* LOCAL_DEV_START */
+const LOCAL_DEV_ACCOUNTS = [
+  { username: 'dokter', password: '123', nama: 'Dokter Umum', role: 'dokter', roleLabel: 'Dokter (Local Dev)', warnaCard: 'yellow' },
+  { username: 'doktergigi', password: '123', nama: 'Dokter Gigi', role: 'dokter', roleLabel: 'Dokter (Local Dev)', warnaCard: 'red' },
+  { username: 'apotek', password: '123', nama: 'Staff Apotek', role: 'apotek', roleLabel: 'Staff Apotek (Local Dev)', warnaCard: 'blue' }
+];
+
+function initLocalDevLogin() {
+  if (!localDevLoginBox) return;
+  if (!isLocalDevEnvironment()) {
+    localDevLoginBox.classList.add('hidden');
+    return;
+  }
+  localDevLoginBox.classList.remove('hidden');
+  const buttons = localDevLoginBox.querySelectorAll('.btn-local-demo');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      inputUsername.value = btn.getAttribute('data-local-user') || '';
+      inputPassword.value = btn.getAttribute('data-local-pass') || '';
+      loginError.classList.add('hidden');
+      if (loginForm.requestSubmit) {
+        loginForm.requestSubmit();
+      } else {
+        loginForm.dispatchEvent(new Event('submit', { cancelable: true }));
+      }
+    });
+  });
+}
+
+function tryLocalDevLogin(usernameVal, passwordVal) {
+  if (!isLocalDevEnvironment()) return null;
+  const found = LOCAL_DEV_ACCOUNTS.find(
+    (u) => u.username === usernameVal && u.password === passwordVal
+  );
+  if (!found) return null;
+  return {
+    username: found.username,
+    nama: found.nama,
+    role: found.role,
+    roleLabel: found.roleLabel,
+    warnaCard: found.warnaCard
+  };
+}
+/* LOCAL_DEV_END */
+
+function completeLoginSuccess(user, serverNotifSettings) {
+  loginError.classList.add('hidden');
+  currentUser = user;
+  if (serverNotifSettings && typeof serverNotifSettings === 'object') {
+    notifSettings = { ...DEFAULT_NOTIF_SETTINGS, ...serverNotifSettings };
+    saveNotifSettings(currentUser.username);
+  } else {
+    loadNotifSettings(currentUser.username);
+  }
+  sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(currentUser));
+  loginForm.reset();
+  showBoardPage();
+  fetchCardsFromServer();
 }
 
 async function handleLogin(e) {
@@ -786,17 +988,25 @@ async function handleLogin(e) {
 
     const data = await res.json();
     if (!res.ok || !data || !data.ok || !data.user) {
+      loginError.textContent = (data && data.error) ? data.error : 'Username atau password salah!';
       loginError.classList.remove('hidden');
       return;
     }
 
-    loginError.classList.add('hidden');
-    currentUser = data.user;
-    sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(currentUser));
-    loginForm.reset();
-    showBoardPage();
-    fetchCardsFromServer();
+    completeLoginSuccess(data.user, data.notifSettings || null);
   } catch (err) {
+    // Jika di lingkungan lokal tanpa PHP/Database, izinkan fallback akun testing lokal
+    if (typeof tryLocalDevLogin === 'function' && isLocalDevEnvironment()) {
+      const localUser = tryLocalDevLogin(usernameVal, passwordVal);
+      if (localUser) {
+        completeLoginSuccess(localUser, null);
+        return;
+      }
+      loginError.textContent = 'Mode Lokal: gunakan dokter / doktergigi / apotek (pass: 123).';
+      loginError.classList.remove('hidden');
+      return;
+    }
+
     loginError.textContent = 'Gagal menghubungi server login.';
     loginError.classList.remove('hidden');
   }
@@ -908,12 +1118,13 @@ function updateNotifButtonUI() {
 
 function onUserReturnToPage() {
   // Ketika user kembali melihat/membuka tab web ini
+  const returnDelay = getReturnPageDelayMs();
   pendingNotifState.dismissedByClick = false;
   progressNotifState.dismissedByClick = false;
   doneNotifState.dismissedByClick = false;
-  pendingNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
-  progressNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
-  doneNotifState.nextFireAt = Date.now() + NOTIF_RETURN_PAGE_DELAY_MS;
+  pendingNotifState.nextFireAt = Date.now() + returnDelay;
+  progressNotifState.nextFireAt = Date.now() + returnDelay;
+  doneNotifState.nextFireAt = Date.now() + returnDelay;
 
   // Hentikan/hilangkan notifikasi pengingat diskusi saat tab web dibuka kembali
   diskusiNotifState.hasUnread = false;
@@ -938,6 +1149,7 @@ function onUserReturnToPage() {
 }
 
 function playNotifBeep(type) {
+  if (!notifSettings.masterEnabled || !notifSettings.soundEnabled) return;
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
@@ -986,6 +1198,7 @@ function showToastMessage(title, body, type) {
 }
 
 function sendDesktopNotification(title, body, type, stateObj) {
+  if (!isNotifEnabledFor(type)) return;
   playNotifBeep(type);
   showToastMessage(title, body, type);
 
@@ -1025,10 +1238,10 @@ function checkStaffNotifications() {
   // Jika halaman web sedang dibuka aktif di layar (tidak di-minimize/tertutup tab lain),
   // user sudah melihat board secara langsung, jadi tidak perlu memicu spam notifikasi desktop
   if (!document.hidden && document.hasFocus && document.hasFocus()) {
-    pendingNotifState.nextFireAt = Date.now() + NOTIF_PENDING_INTERVAL_MS;
-    progressNotifState.nextFireAt = Date.now() + NOTIF_PROGRESS_INTERVAL_MS;
-    doneNotifState.nextFireAt = Date.now() + NOTIF_DONE_INTERVAL_MS;
-    diskusiNotifState.nextFireAt = Date.now() + NOTIF_DISKUSI_INTERVAL_MS;
+    pendingNotifState.nextFireAt = Date.now() + getNotifIntervalMs('pending');
+    progressNotifState.nextFireAt = Date.now() + getNotifIntervalMs('onprogress');
+    doneNotifState.nextFireAt = Date.now() + getNotifIntervalMs('done');
+    diskusiNotifState.nextFireAt = Date.now() + getNotifIntervalMs('diskusi');
     diskusiNotifState.hasUnread = false; // Web sedang dibuka langsung
     return;
   }
@@ -1036,11 +1249,11 @@ function checkStaffNotifications() {
   const now = Date.now();
 
   // ==========================================
-  // 1) NOTIFIKASI BERULANG UNTUK DISKUSI (SETIAP 20 DETIK SAMPAI WEB DIBUKA KEMBALI)
+  // 1) NOTIFIKASI BERULANG UNTUK DISKUSI (SESUAI PENGATURAN INTERVAL)
   // Berlaku untuk Dokter & Staff ketika ada perubahan diskusi yang belum dilihat
   // ==========================================
   const diskusiCards = cards.filter((c) => c.status === 'diskusi');
-  if (diskusiCards.length === 0) {
+  if (diskusiCards.length === 0 || !isNotifEnabledFor('diskusi')) {
     diskusiNotifState.hasUnread = false;
     diskusiNotifState.nextFireAt = 0;
     if (diskusiNotifState.activeNotif) {
@@ -1054,11 +1267,11 @@ function checkStaffNotifications() {
       'diskusi',
       diskusiNotifState
     );
-    diskusiNotifState.nextFireAt = now + NOTIF_DISKUSI_INTERVAL_MS;
+    diskusiNotifState.nextFireAt = now + getNotifIntervalMs('diskusi');
   }
 
   // ==========================================
-  // 1) NOTIFIKASI UNTUK DOKTER: FASE DONE (20 DETIK SEKALI)
+  // 1) NOTIFIKASI UNTUK DOKTER: FASE DONE
   // ==========================================
   if (currentUser.role === 'dokter') {
     // Ambil resep di Done yang dokternya cocok dengan dokter yang login (atau semua jika cocok)
@@ -1070,7 +1283,7 @@ function checkStaffNotifications() {
       return docName.includes(currUser) || docName.includes(currName) || currName.includes(docName);
     });
 
-    if (doneCards.length === 0) {
+    if (doneCards.length === 0 || !isNotifEnabledFor('done')) {
       doneNotifState.nextFireAt = 0;
       if (doneNotifState.activeNotif) {
         doneNotifState.activeNotif.close();
@@ -1082,13 +1295,13 @@ function checkStaffNotifications() {
       const body = `Pasien boleh ambil di apotek: ${firstCard.resep.slice(0, 70)}`;
 
       sendDesktopNotification(title, body, 'done', doneNotifState);
-      doneNotifState.nextFireAt = now + NOTIF_DONE_INTERVAL_MS; // Putar ulang setiap interval selesai
+      doneNotifState.nextFireAt = now + getNotifIntervalMs('done');
     }
     return;
   }
 
   // ==========================================
-  // 2) NOTIFIKASI UNTUK STAFF APOTEK: NEW (1x), PENDING (20s, jeda awal 20s), & ON PROGRESS (20s)
+  // 2) NOTIFIKASI UNTUK STAFF APOTEK: NEW (1x), PENDING, & ON PROGRESS
   // ==========================================
   if (currentUser.role === 'apotek') {
     const newCards = cards.filter((c) => c.status === 'new');
@@ -1099,14 +1312,16 @@ function checkStaffNotifications() {
     const unnotifiedNewCards = newCards.filter((c) => !notifiedNewCardIds.has(c.id));
     if (unnotifiedNewCards.length > 0) {
       unnotifiedNewCards.forEach((c) => notifiedNewCardIds.add(c.id));
-      const firstCard = unnotifiedNewCards[0];
-      const title = `📥 RESEP BARU MASUK (${unnotifiedNewCards.length} Resep New)`;
-      const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
-      sendDesktopNotification(title, body, 'new', { activeNotif: null });
+      if (isNotifEnabledFor('new')) {
+        const firstCard = unnotifiedNewCards[0];
+        const title = `📥 RESEP BARU MASUK (${unnotifiedNewCards.length} Resep New)`;
+        const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
+        sendDesktopNotification(title, body, 'new', { activeNotif: null });
+      }
     }
 
     // b. NOTIFIKASI PENDING: Pengingat berkala sampai web dibuka
-    if (pendingCards.length === 0) {
+    if (pendingCards.length === 0 || !isNotifEnabledFor('pending')) {
       pendingNotifState.nextFireAt = 0;
       if (pendingNotifState.activeNotif) {
         pendingNotifState.activeNotif.close();
@@ -1115,19 +1330,19 @@ function checkStaffNotifications() {
     } else {
       if (pendingNotifState.nextFireAt === 0) {
         // Jeda awal saat baru ada card pending
-        pendingNotifState.nextFireAt = now + NOTIF_PENDING_INITIAL_DELAY_MS;
+        pendingNotifState.nextFireAt = now + getNotifIntervalMs('pending');
       } else if (now >= pendingNotifState.nextFireAt) {
         const firstCard = pendingCards[0];
         const title = `⚠️ PENDING - ${pendingCards.length} Resep Menunggu!`;
         const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
 
         sendDesktopNotification(title, body, 'pending', pendingNotifState);
-        pendingNotifState.nextFireAt = now + NOTIF_PENDING_INTERVAL_MS; // Putar ulang
+        pendingNotifState.nextFireAt = now + getNotifIntervalMs('pending');
       }
     }
 
     // c. NOTIFIKASI ON PROGRESS: Pengingat berkala sampai user kembali ke web
-    if (progressCards.length === 0) {
+    if (progressCards.length === 0 || !isNotifEnabledFor('onprogress')) {
       progressNotifState.nextFireAt = 0;
       if (progressNotifState.activeNotif) {
         progressNotifState.activeNotif.close();
@@ -1139,7 +1354,7 @@ function checkStaffNotifications() {
       const body = `${firstCard.dokter}: ${firstCard.resep.slice(0, 70)}`;
 
       sendDesktopNotification(title, body, 'onprogress', progressNotifState);
-      progressNotifState.nextFireAt = now + NOTIF_PROGRESS_INTERVAL_MS; // Putar ulang
+      progressNotifState.nextFireAt = now + getNotifIntervalMs('onprogress');
     }
   }
 }
@@ -2269,6 +2484,123 @@ function setupEventListeners() {
   historyOverlay.addEventListener('click', (e) => {
     if (e.target === historyOverlay) historyOverlay.classList.add('hidden');
   });
+
+  // Modal Pengaturan Notifikasi
+  if (btnOpenNotifSettings) {
+    btnOpenNotifSettings.addEventListener('click', openNotifSettingsModal);
+  }
+  if (btnCloseNotifSettings) {
+    btnCloseNotifSettings.addEventListener('click', closeNotifSettingsModal);
+  }
+  if (btnCloseNotifSettingsBottom) {
+    btnCloseNotifSettingsBottom.addEventListener('click', closeNotifSettingsModal);
+  }
+  if (btnSaveNotifSettings) {
+    btnSaveNotifSettings.addEventListener('click', saveNotifSettingsFromForm);
+  }
+  if (btnResetNotifSettings) {
+    btnResetNotifSettings.addEventListener('click', resetNotifSettingsToDefault);
+  }
+  if (notifSettingsOverlay) {
+    notifSettingsOverlay.addEventListener('click', (e) => {
+      if (e.target === notifSettingsOverlay) closeNotifSettingsModal();
+    });
+  }
+}
+
+function populateNotifSettingsForm() {
+  const setVal = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  };
+  const setCheck = (id, checked) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = Boolean(checked);
+  };
+
+  setCheck('ns-master-enabled', notifSettings.masterEnabled);
+  setCheck('ns-sound-enabled', notifSettings.soundEnabled);
+  setVal('ns-return-delay-val', notifSettings.returnDelayVal);
+  setVal('ns-return-delay-unit', notifSettings.returnDelayUnit);
+
+  setCheck('ns-new-enabled', notifSettings.newEnabled);
+
+  setCheck('ns-pending-enabled', notifSettings.pendingEnabled);
+  setVal('ns-pending-val', notifSettings.pendingIntervalVal);
+  setVal('ns-pending-unit', notifSettings.pendingIntervalUnit);
+
+  setCheck('ns-diskusi-enabled', notifSettings.diskusiEnabled);
+  setVal('ns-diskusi-val', notifSettings.diskusiIntervalVal);
+  setVal('ns-diskusi-unit', notifSettings.diskusiIntervalUnit);
+
+  setCheck('ns-progress-enabled', notifSettings.progressEnabled);
+  setVal('ns-progress-val', notifSettings.progressIntervalVal);
+  setVal('ns-progress-unit', notifSettings.progressIntervalUnit);
+
+  setCheck('ns-done-enabled', notifSettings.doneEnabled);
+  setVal('ns-done-val', notifSettings.doneIntervalVal);
+  setVal('ns-done-unit', notifSettings.doneIntervalUnit);
+}
+
+function openNotifSettingsModal() {
+  if (!notifSettingsOverlay) return;
+  populateNotifSettingsForm();
+  notifSettingsOverlay.classList.remove('hidden');
+}
+
+function closeNotifSettingsModal() {
+  if (!notifSettingsOverlay) return;
+  notifSettingsOverlay.classList.add('hidden');
+}
+
+function saveNotifSettingsFromForm() {
+  const getVal = (id, fallback) => {
+    const el = document.getElementById(id);
+    return el ? el.value : fallback;
+  };
+  const getNum = (id, fallback) => {
+    const el = document.getElementById(id);
+    const n = el ? parseInt(el.value, 10) : fallback;
+    return (!isNaN(n) && n >= 1) ? n : fallback;
+  };
+  const getCheck = (id, fallback) => {
+    const el = document.getElementById(id);
+    return el ? el.checked : fallback;
+  };
+
+  notifSettings = {
+    masterEnabled: getCheck('ns-master-enabled', true),
+    soundEnabled: getCheck('ns-sound-enabled', true),
+    returnDelayVal: getNum('ns-return-delay-val', 20),
+    returnDelayUnit: getVal('ns-return-delay-unit', 'sec'),
+    newEnabled: getCheck('ns-new-enabled', true),
+    pendingEnabled: getCheck('ns-pending-enabled', true),
+    pendingIntervalVal: getNum('ns-pending-val', 20),
+    pendingIntervalUnit: getVal('ns-pending-unit', 'sec'),
+    diskusiEnabled: getCheck('ns-diskusi-enabled', true),
+    diskusiIntervalVal: getNum('ns-diskusi-val', 20),
+    diskusiIntervalUnit: getVal('ns-diskusi-unit', 'sec'),
+    progressEnabled: getCheck('ns-progress-enabled', true),
+    progressIntervalVal: getNum('ns-progress-val', 20),
+    progressIntervalUnit: getVal('ns-progress-unit', 'sec'),
+    doneEnabled: getCheck('ns-done-enabled', true),
+    doneIntervalVal: getNum('ns-done-val', 20),
+    doneIntervalUnit: getVal('ns-done-unit', 'sec')
+  };
+
+  saveNotifSettings(currentUser ? currentUser.username : 'guest');
+  syncNotifSettingsToServer();
+  onUserReturnToPage();
+  closeNotifSettingsModal();
+  showToastMessage('⚙️ Pengaturan Disimpan', 'Pengaturan notifikasi per akun berhasil diperbarui.', 'done');
+}
+
+function resetNotifSettingsToDefault() {
+  notifSettings = { ...DEFAULT_NOTIF_SETTINGS };
+  saveNotifSettings(currentUser ? currentUser.username : 'guest');
+  syncNotifSettingsToServer();
+  populateNotifSettingsForm();
+  showToastMessage('🔄 Reset Default', 'Pengaturan notifikasi dikembalikan ke awal (20 detik).', 'diskusi');
 }
 
 document.addEventListener('DOMContentLoaded', initApp);

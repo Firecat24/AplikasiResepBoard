@@ -1,6 +1,7 @@
 # File kredensial database cPanel, catatan akun login, & panduan PDF (JANGAN di-upload ke GitHub)
 config.php
 akun_login.txt
+catatan_pindah_hosting.txt
 Panduan_Penggunaan_ResepBoard.pdf
 *.pdf
 

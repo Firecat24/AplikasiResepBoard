@@ -64,6 +64,37 @@ if ($method === 'POST') {
 }
 
 // =========================================================================
+// HELPER PENGATURAN NOTIFIKASI PER AKUN (DISIMPAN DI notif_settings.json)
+// =========================================================================
+function getNotifSettingsFilePath() {
+    return __DIR__ . '/notif_settings.json';
+}
+
+function readAllNotifSettings() {
+    $file = getNotifSettingsFilePath();
+    if (!file_exists($file)) {
+        return [];
+    }
+    $raw = file_get_contents($file);
+    if (!$raw) return [];
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function writeAllNotifSettings($all) {
+    $file = getNotifSettingsFilePath();
+    $json = json_encode($all, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    return file_put_contents($file, $json . "\n", LOCK_EX) !== false;
+}
+
+function isKnownUsername($USERS, $username) {
+    foreach ($USERS as $u) {
+        if ($u['username'] === $username) return true;
+    }
+    return false;
+}
+
+// =========================================================================
 // POST (action = login): Verifikasi Login di Server (Tanpa membocorkan password ke JS)
 // =========================================================================
 if ($method === 'POST' && isset($input['action']) && $input['action'] === 'login') {
@@ -72,6 +103,7 @@ if ($method === 'POST' && isset($input['action']) && $input['action'] === 'login
 
     foreach ($USERS as $u) {
         if ($u['username'] === $uName && $u['password'] === $uPass) {
+            $allNotif = readAllNotifSettings();
             echo json_encode([
                 'ok' => true,
                 'user' => [
@@ -80,7 +112,8 @@ if ($method === 'POST' && isset($input['action']) && $input['action'] === 'login
                     'role' => $u['role'],
                     'roleLabel' => $u['roleLabel'],
                     'warnaCard' => $u['warnaCard']
-                ]
+                ],
+                'notifSettings' => $allNotif[$u['username']] ?? null
             ]);
             exit;
         }
@@ -90,6 +123,48 @@ if ($method === 'POST' && isset($input['action']) && $input['action'] === 'login
     echo json_encode([
         'ok' => false,
         'error' => 'Username atau password salah!'
+    ]);
+    exit;
+}
+
+// =========================================================================
+// POST (action = get_notif_settings / save_notif_settings): Pengaturan Notif Per Akun
+// =========================================================================
+if ($method === 'POST' && isset($input['action']) && $input['action'] === 'get_notif_settings') {
+    $uName = trim($input['username'] ?? '');
+    if ($uName === '' || !isKnownUsername($USERS, $uName)) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Akun tidak dikenali']);
+        exit;
+    }
+    $allNotif = readAllNotifSettings();
+    echo json_encode([
+        'ok' => true,
+        'settings' => $allNotif[$uName] ?? null
+    ]);
+    exit;
+}
+
+if ($method === 'POST' && isset($input['action']) && $input['action'] === 'save_notif_settings') {
+    $uName = trim($input['username'] ?? '');
+    $settings = $input['settings'] ?? null;
+    if ($uName === '' || !isKnownUsername($USERS, $uName) || !is_array($settings)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Data pengaturan tidak valid']);
+        exit;
+    }
+
+    $allNotif = readAllNotifSettings();
+    $allNotif[$uName] = $settings;
+    if (!writeAllNotifSettings($allNotif)) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Gagal menulis file notif_settings.json']);
+        exit;
+    }
+
+    echo json_encode([
+        'ok' => true,
+        'settings' => $settings
     ]);
     exit;
 }

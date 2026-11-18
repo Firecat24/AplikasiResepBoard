@@ -14,13 +14,15 @@ jobs:
       - name: Ambil Kode Terbaru dari Repository
         uses: actions/checkout@v4
 
-      - name: Update Nomor Versi Otomatis (Cache Busting)
+      - name: Update Nomor Versi & Hapus Kode Testing Lokal (Keamanan Produksi)
         run: |
           VER=$(date +%s)
           sed -i "s/style.css?v=[0-9]*/style.css?v=$VER/g" index.html
           sed -i "s/script.js?v=[0-9]*/script.js?v=$VER/g" index.html
           sed -i "s/favicon.ico?v=[0-9]*/favicon.ico?v=$VER/g" index.html
           sed -i "s/logo_dmu.png?v=[0-9]*/logo_dmu.png?v=$VER/g" index.html
+          perl -0777 -i -pe 's/<!-- LOCAL_DEV_START -->.*?<!-- LOCAL_DEV_END -->//gs' index.html
+          perl -0777 -i -pe 's/\/\* LOCAL_DEV_START \*\/.*?\/\* LOCAL_DEV_END \*\///gs' script.js
 
       - name: Sinkronisasi File ke Folder Subdomain cPanel via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -28,9 +30,12 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          # Jangan pernah menimpa atau menghapus file config.php yang sudah ada di cPanel
+          # Jangan pernah menimpa atau menghapus file konfigurasi/pengaturan/catatan yang ada di server
           exclude: |
             **/.git*
             **/.git*/**
             **/node_modules/**
             config.php
+            notif_settings.json
+            catatan_pindah_hosting.txt
+            akun_login.txt
