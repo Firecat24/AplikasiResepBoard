@@ -1210,7 +1210,7 @@ function sendDesktopNotification(title, body, type, stateObj) {
       const n = new Notification(title, {
         body: body,
         icon: 'logo_dmu.png',
-        tag: `resepboard-${type}-${Date.now()}`,
+        tag: `e-rx-${type}-${Date.now()}`,
         requireInteraction: false
       });
 

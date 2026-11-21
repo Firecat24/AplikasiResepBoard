@@ -1,4 +1,4 @@
-name: Deploy ResepBoard ke cPanel Subdomain
+name: Deploy E-Rx ke cPanel Subdomain
 
 on:
   push:
