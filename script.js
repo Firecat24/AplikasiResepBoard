@@ -889,19 +889,92 @@ function saveCardsToStorage() {
 }
 
 // =========================================================================
-// 5. SISTEM LOGIN & SESSION STATIS
+// 5. SISTEM LOGIN & AUTO-LOGIN PERSISTEN (COOKIE + LOCALSTORAGE)
 // =========================================================================
+const SESSION_COOKIE_DAYS = 30;
+
+function setSessionCookie(name, value, days) {
+  try {
+    const maxAge = (days || SESSION_COOKIE_DAYS) * 24 * 60 * 60;
+    const secureFlag = window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${maxAge}; path=/; SameSite=Lax${secureFlag}`;
+  } catch (e) {
+    // Abaikan jika browser membatasi cookie (misal file://)
+  }
+}
+
+function getSessionCookie(name) {
+  try {
+    const prefix = `${name}=`;
+    const parts = document.cookie.split(';');
+    for (let i = 0; i < parts.length; i++) {
+      const item = parts[i].trim();
+      if (item.indexOf(prefix) === 0) {
+        return decodeURIComponent(item.substring(prefix.length));
+      }
+    }
+  } catch (e) {
+    // Abaikan
+  }
+  return null;
+}
+
+function clearSessionCookie(name) {
+  try {
+    const secureFlag = window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = `${name}=; max-age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax${secureFlag}`;
+  } catch (e) {
+    // Abaikan
+  }
+}
+
+function saveUserSession(userObj) {
+  const serialized = JSON.stringify(userObj);
+  setSessionCookie(STORAGE_SESSION_KEY, serialized, SESSION_COOKIE_DAYS);
+  try {
+    localStorage.setItem(STORAGE_SESSION_KEY, serialized);
+    sessionStorage.setItem(STORAGE_SESSION_KEY, serialized);
+  } catch (e) {
+    // Abaikan jika storage penuh
+  }
+}
+
+function clearUserSession() {
+  clearSessionCookie(STORAGE_SESSION_KEY);
+  try {
+    localStorage.removeItem(STORAGE_SESSION_KEY);
+    sessionStorage.removeItem(STORAGE_SESSION_KEY);
+  } catch (e) {
+    // Abaikan
+  }
+}
+
+function loadUserSession() {
+  const fromCookie = getSessionCookie(STORAGE_SESSION_KEY);
+  if (fromCookie) return fromCookie;
+  try {
+    return localStorage.getItem(STORAGE_SESSION_KEY) || sessionStorage.getItem(STORAGE_SESSION_KEY);
+  } catch (e) {
+    return null;
+  }
+}
+
 function checkSavedSession() {
-  const saved = sessionStorage.getItem(STORAGE_SESSION_KEY);
+  const saved = loadUserSession();
   if (saved) {
     try {
-      currentUser = JSON.parse(saved);
-      loadNotifSettings(currentUser.username);
-      fetchNotifSettingsFromServer();
-      showBoardPage();
-      return;
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.username && parsed.role) {
+        currentUser = parsed;
+        // Perpanjang masa aktif cookie setiap kali web dibuka kembali
+        saveUserSession(currentUser);
+        loadNotifSettings(currentUser.username);
+        fetchNotifSettingsFromServer();
+        showBoardPage();
+        return;
+      }
     } catch (e) {
-      sessionStorage.removeItem(STORAGE_SESSION_KEY);
+      clearUserSession();
     }
   }
   showLoginPage();
@@ -961,32 +1034,69 @@ function completeLoginSuccess(user, serverNotifSettings) {
   } else {
     loadNotifSettings(currentUser.username);
   }
-  sessionStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(currentUser));
+  saveUserSession(currentUser);
   loginForm.reset();
   showBoardPage();
   fetchCardsFromServer();
+}
+
+async function requestLoginWithRetry(usernameVal, passwordVal, maxAttempts = 2) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${API_URL}?_login=${Date.now()}`, {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          action: 'login',
+          username: usernameVal,
+          password: passwordVal
+        })
+      });
+
+      const rawText = await res.text();
+      let data = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        const err = new Error(`Respons server bukan JSON (HTTP ${res.status})`);
+        err.httpStatus = res.status;
+        err.isNonJson = true;
+        throw err;
+      }
+
+      return { res, data };
+    } catch (err) {
+      lastError = err;
+      // Coba ulang otomatis sekali lagi jika koneksi baru bangun / stale socket di tablet
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    }
+  }
+  throw lastError;
 }
 
 async function handleLogin(e) {
   e.preventDefault();
   const usernameVal = inputUsername.value.trim();
   const passwordVal = inputPassword.value.trim();
+  const submitBtn = loginForm ? loginForm.querySelector('button[type="submit"]') : null;
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Memproses...';
+  }
+  loginError.classList.add('hidden');
 
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({
-        action: 'login',
-        username: usernameVal,
-        password: passwordVal
-      })
-    });
+    const { res, data } = await requestLoginWithRetry(usernameVal, passwordVal, 2);
 
-    const data = await res.json();
     if (!res.ok || !data || !data.ok || !data.user) {
       loginError.textContent = (data && data.error) ? data.error : 'Username atau password salah!';
       loginError.classList.remove('hidden');
@@ -1007,15 +1117,24 @@ async function handleLogin(e) {
       return;
     }
 
-    loginError.textContent = 'Gagal menghubungi server login.';
+    if (err && err.isNonJson) {
+      loginError.textContent = `Server mengirim respons tidak valid (HTTP ${err.httpStatus || '?'}). Silakan refresh halaman lalu coba lagi.`;
+    } else {
+      loginError.textContent = 'Gagal menghubungi server login. Pastikan Wi-Fi/internet aktif lalu coba klik Masuk lagi.';
+    }
     loginError.classList.remove('hidden');
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Masuk';
+    }
   }
 }
 
 function handleLogout() {
   exitDeleteMode();
   currentUser = null;
-  sessionStorage.removeItem(STORAGE_SESSION_KEY);
+  clearUserSession();
   showLoginPage();
 }
 

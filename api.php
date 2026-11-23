@@ -4,6 +4,9 @@
  * KONEKSI API & AUTENTIKASI LOGIN SERVER-SIDE (AMAN DARI PUBLIK)
  * =========================================================================
  */
+ini_set('display_errors', '0');
+error_reporting(E_ALL);
+
 $DB_HOST = 'localhost';
 $DB_NAME = '';
 $DB_USER = '';
@@ -45,6 +48,8 @@ if (empty($USERS)) {
 }
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 
 // Tolak jika seseorang mencoba membuka URL /api.php langsung dari address bar browser
 $requestedWith = $_SERVER['HTTP_X_REQUESTED_WITH'] ?? '';
@@ -72,10 +77,10 @@ function getNotifSettingsFilePath() {
 
 function readAllNotifSettings() {
     $file = getNotifSettingsFilePath();
-    if (!file_exists($file)) {
+    if (!file_exists($file) || !is_readable($file)) {
         return [];
     }
-    $raw = file_get_contents($file);
+    $raw = @file_get_contents($file);
     if (!$raw) return [];
     $decoded = json_decode($raw, true);
     return is_array($decoded) ? $decoded : [];
