@@ -465,17 +465,22 @@ function initApp() {
   // Polling sinkronisasi otomatis ke database cPanel
   // Jangan re-render jika sedang mengetik teks agar kursor/fokus tidak hilang
   setInterval(() => {
-    if (useServerDB && currentUser && !isDeleteMode && !isUserEditingText()) {
+    if (shouldUseServerAPI() && currentUser && !isDeleteMode && !isUserEditingText()) {
       fetchCardsFromServer();
     }
   }, 3000);
 
   // Saat user kembali membuka/fokus ke tab web, reset status notifikasi & hentikan bunyi pengingat
   window.addEventListener('focus', onUserReturnToPage);
+  window.addEventListener('online', () => {
+    if (shouldUseServerAPI() && currentUser) {
+      fetchCardsFromServer();
+    }
+  });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       onUserReturnToPage();
-      if (useServerDB && currentUser && !isUserEditingText()) {
+      if (shouldUseServerAPI() && currentUser && !isUserEditingText()) {
         fetchCardsFromServer();
       }
     }
@@ -703,12 +708,70 @@ function checkForDiskusiChanges(newCards) {
   }
 }
 
+// Antrean card lokal yang belum terkonfirmasi tersimpan oleh server (anti-hilang saat sinyal putus)
+const unsyncedUpsertMap = new Map();
+let isFlushingUnsynced = false;
+
+function shouldUseServerAPI() {
+  if (window.location.protocol === 'file:') return false;
+  if (isLocalDevEnvironment() && !useServerDB) return false;
+  return true;
+}
+
+async function postUpsertOnce(card) {
+  const res = await fetch(`${API_URL}?_upsert=${Date.now()}`, {
+    method: 'POST',
+    cache: 'no-store',
+    credentials: 'same-origin',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest'
+    },
+    body: JSON.stringify({ action: 'upsert', card })
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* respon bukan JSON */ }
+  if (!res.ok || !data || !data.ok) {
+    const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return true;
+}
+
+async function flushUnsyncedUpserts() {
+  if (isFlushingUnsynced || unsyncedUpsertMap.size === 0 || !shouldUseServerAPI()) return;
+  isFlushingUnsynced = true;
+  try {
+    const entries = Array.from(unsyncedUpsertMap.entries());
+    for (const [cardId, cardSnapshot] of entries) {
+      const latestCard = cards.find((c) => c.id === cardId) || cardSnapshot;
+      try {
+        await postUpsertOnce(latestCard);
+        useServerDB = true;
+        unsyncedUpsertMap.delete(cardId);
+      } catch (err) {
+        // Biarkan tetap di antrean agar dicoba ulang pada polling berikutnya
+        break;
+      }
+    }
+  } finally {
+    isFlushingUnsynced = false;
+  }
+}
+
 async function fetchCardsFromServer() {
   if (window.location.protocol === 'file:') return;
+
+  // Jika masih ada card lokal yang gagal/tertunda kirim ke server, kirim ulang dulu sebelum ambil data server
+  if (unsyncedUpsertMap.size > 0) {
+    await flushUnsyncedUpserts();
+  }
+
   const fetchStartVersion = localMutationVersion;
   try {
     const res = await fetch(`${API_URL}?_t=${Date.now()}`, {
       cache: 'no-store',
+      credentials: 'same-origin',
       headers: { 'X-Requested-With': 'XMLHttpRequest' }
     });
     const data = await res.json();
@@ -726,16 +789,27 @@ async function fetchCardsFromServer() {
         return;
       }
 
+      // Gabungkan card dari server dengan card lokal yang masih menunggu sinkronisasi (agar TIDAK PERNAH hilang!)
+      let mergedCards = data.cards;
+      if (unsyncedUpsertMap.size > 0) {
+        const mergedById = new Map(data.cards.map((c) => [c.id, c]));
+        unsyncedUpsertMap.forEach((pendingCard, id) => {
+          const latestLocal = cards.find((c) => c.id === id) || pendingCard;
+          mergedById.set(id, latestLocal);
+        });
+        mergedCards = Array.from(mergedById.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      }
+
       // Pantau adanya pembaruan/edit resep untuk animasi highlight border card
-      checkForRecipeEditUpdates(data.cards);
+      checkForRecipeEditUpdates(mergedCards);
 
       // Pantau adanya perubahan baru pada fase Diskusi
-      checkForDiskusiChanges(data.cards);
+      checkForDiskusiChanges(mergedCards);
 
-      // Hanya re-render jika data dari server memang ada perbedaan nyata
-      const isDifferent = JSON.stringify(cards) !== JSON.stringify(data.cards);
+      // Hanya re-render jika data memang ada perbedaan nyata
+      const isDifferent = JSON.stringify(cards) !== JSON.stringify(mergedCards);
       if (isDifferent) {
-        cards = data.cards;
+        cards = mergedCards;
         localStorage.setItem(STORAGE_CARDS_KEY, JSON.stringify(cards));
         renderBoard();
       }
@@ -760,28 +834,34 @@ async function syncUpsertCardToServer(card) {
       previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
     }
   }
-  if (!useServerDB) return true;
+  if (!shouldUseServerAPI()) return true;
+
+  // Tandai card ini sedang menunggu konfirmasi server agar tidak terhapus oleh polling
+  if (card && card.id) {
+    unsyncedUpsertMap.set(card.id, card);
+  }
+
   pendingSyncCount++;
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({ action: 'upsert', card })
-    });
-    let data = null;
-    try { data = await res.json(); } catch (e) { /* respon bukan JSON */ }
-    if (!res.ok || !data || !data.ok) {
-      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
-      console.error('Gagal simpan ke server:', msg);
-      showToastMessage('❌ Gagal Menyimpan', msg, 'pending');
-      return false;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await postUpsertOnce(card);
+        useServerDB = true;
+        if (card && card.id) {
+          unsyncedUpsertMap.delete(card.id);
+        }
+        return true;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+        }
+      }
     }
-    return true;
-  } catch (err) {
-    showToastMessage('❌ Gagal Menyimpan', 'Koneksi ke server terputus', 'pending');
+    const msg = lastErr ? lastErr.message : 'Koneksi terputus';
+    console.error('Gagal simpan ke server (akan dicoba ulang otomatis):', msg);
+    showToastMessage('⚠️ Sinyal Terganggu', `Resep disimpan lokal & akan otomatis dikirim ulang (${msg})`, 'pending');
     return false;
   } finally {
     pendingSyncCount = Math.max(0, pendingSyncCount - 1);
@@ -819,35 +899,46 @@ async function sendChatMessage(cardId, rawText) {
   saveCardsToStorage();
   renderBoard();
 
-  if (!useServerDB) return true;
+  if (!shouldUseServerAPI()) return true;
   pendingSyncCount++;
   try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({
-        action: 'send_chat',
-        cardId: card.id,
-        message: newMsg
-      })
-    });
-    const data = await res.json();
-    if (!res.ok || !data || !data.ok) {
-      const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
-      showToastMessage('❌ Gagal Kirim Chat', msg, 'pending');
-      return false;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(`${API_URL}?_chat=${Date.now()}`, {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({
+            action: 'send_chat',
+            cardId: card.id,
+            message: newMsg
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data || !data.ok) {
+          const msg = (data && data.error) ? data.error : `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        useServerDB = true;
+        if (Array.isArray(data.chatDiskusi)) {
+          card.chatDiskusi = data.chatDiskusi;
+          previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
+          saveCardsToStorage();
+        }
+        return true;
+      } catch (err) {
+        lastErr = err;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      }
     }
-    if (Array.isArray(data.chatDiskusi)) {
-      card.chatDiskusi = data.chatDiskusi;
-      previousDiskusiCardsMap.set(card.id, getDiskusiCardSignature(card));
-      saveCardsToStorage();
-    }
-    return true;
-  } catch (err) {
-    showToastMessage('❌ Gagal Kirim Chat', 'Koneksi ke server terputus', 'pending');
+    showToastMessage('❌ Gagal Kirim Chat', lastErr ? lastErr.message : 'Koneksi ke server terputus', 'pending');
     return false;
   } finally {
     pendingSyncCount = Math.max(0, pendingSyncCount - 1);
@@ -856,18 +947,46 @@ async function sendChatMessage(cardId, rawText) {
 }
 
 async function syncDeleteCardsToServer(ids) {
-  if (!useServerDB || !ids || ids.length === 0) return;
+  if (!ids || ids.length === 0) return;
+
+  localMutationVersion++;
+  lastLocalChangeAt = Date.now();
+  ids.forEach((id) => {
+    unsyncedUpsertMap.delete(id);
+    previousCardsEditMap.delete(id);
+    previousDiskusiCardsMap.delete(id);
+  });
+
+  if (!shouldUseServerAPI()) return;
+
+  pendingSyncCount++;
   try {
-    await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({ action: 'delete', ids })
-    });
-  } catch (err) {
-    // Abaikan jika sedang offline
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(`${API_URL}?_del=${Date.now()}`, {
+          method: 'POST',
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({ action: 'delete', ids })
+        });
+        const data = await res.json();
+        if (res.ok && data && data.ok) {
+          useServerDB = true;
+          return;
+        }
+      } catch (err) {
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      }
+    }
+  } finally {
+    pendingSyncCount = Math.max(0, pendingSyncCount - 1);
+    lastLocalChangeAt = Date.now();
   }
 }
 function loadCardsFromStorage() {
